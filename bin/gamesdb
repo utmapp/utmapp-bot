@@ -1,0 +1,3 @@
+#!/bin/sh
+# gamesdb, as one word for skills: zsh does not split "python3 path" held in a variable.
+exec python3 "$(cd "$(dirname "$0")/.." && pwd)/scripts/gamesdb" "$@"

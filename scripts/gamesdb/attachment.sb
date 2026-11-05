@@ -1,0 +1,16 @@
+;; Sandbox for decoding users' attachments (video frames, binary plists).
+;; The files are untrusted and may be crafted to exploit a decoder, so the
+;; decoder runs with no network, may start no other program, may write only
+;; to its output directory (plus the system temporary area), and may not
+;; read anything in the home folder except its input and output directories
+;; and the caches and preferences the system frameworks need.
+;; Parameters: SELF (the decoder binary), SELFDIR (its directory), IN, OUT, HOME.
+(version 1)
+(allow default)
+(deny network*)
+(deny process-exec* (require-not (literal (param "SELF"))))
+(deny file-write* (require-not (require-any (subpath (param "OUT")) (subpath "/private/var/folders") (subpath "/dev"))))
+(deny file-read* (require-all (subpath (param "HOME"))
+                              (require-not (require-any (subpath (param "SELFDIR")) (subpath (param "IN")) (subpath (param "OUT"))
+                                                        (subpath (string-append (param "HOME") "/Library/Caches"))
+                                                        (subpath (string-append (param "HOME") "/Library/Preferences"))))))
