@@ -1,0 +1,106 @@
+#!/bin/bash
+# npt-wine [--backend neptune|dxvk|wine] <exe> [args...]
+#
+# Run an x86_64 Windows program under Wine (FEX-emulated) with one D3D
+# backend, in the shared prefix ~/wine-prefixes/multi-backend/pfx:
+#
+#   neptune  Neptune's PE DLLs from ~/mesa/builddir-win64 (default): D3D11/12
+#            through the VirtIO GPU, the path under test
+#   dxvk     DXVK from ~/dxvk/builddir-win64, over Venus Vulkan
+#   wine     Wine's own wined3d (Vulkan renderer)
+#
+# <exe> is a Linux path, or a Windows path in the prefix ('C:/Program
+# Files/...').  Each backend installs its DLLs into the prefix before the
+# run, so switching is safe.  Wine is Kron4ek's 10.9 staging-tkg with esync,
+# the build every Neptune measurement so far was taken with.
+#
+# Run it detached with output to a file (utmbot test/launch do), never
+# through tee: block-buffered output is lost when the program is killed.
+set -euo pipefail
+
+BACKEND=neptune
+if [ "${1:-}" = --backend ]; then BACKEND="$2"; shift 2; fi
+[ $# -ge 1 ] || { sed -n '2,20p' "$0" >&2; exit 2; }
+EXE="$1"; shift
+
+W=${WINE_DIR:-$HOME/wine-10.9-staging-tkg-amd64}
+export WINEPREFIX=$HOME/wine-prefixes/multi-backend/pfx WINEARCH=win64
+export WINELOADER=$W/bin/wine WINESERVER=$W/bin/wineserver WINEESYNC=1
+ulimit -n 524288 2>/dev/null || true
+SYS32=$WINEPREFIX/drive_c/windows/system32
+LOGDIR=$HOME/wine-run-logs
+mkdir -p "$LOGDIR"
+
+fex() { FEXBash -c 'exec "$@"' fex "$@"; }
+
+# Wayland session; Neptune's WSI needs an X11 window (winex11.drv on
+# Xwayland), the others use winewayland.drv.
+unset DISPLAY XAUTHORITY WAYLAND_DISPLAY
+export XDG_RUNTIME_DIR=/run/user/$(id -u)
+export DBUS_SESSION_BUS_ADDRESS=unix:path=$XDG_RUNTIME_DIR/bus
+
+# a wineserver of another backend keeps the prefix on its display driver
+fex "$WINESERVER" -k 2>/dev/null || true
+fex "$WINESERVER" -w 2>/dev/null || true
+[ -f "$WINEPREFIX/system.reg" ] || { fex "$WINELOADER" wineboot --init >"$LOGDIR/wineboot.log" 2>&1; fex "$WINESERVER" -w; }
+
+case "$BACKEND" in
+neptune)
+    export DISPLAY=:0
+    # Xwayland starts, and writes its auth file, at the first X client
+    timeout 3 xset -q >/dev/null 2>&1 || true
+    for _ in $(seq 1 100); do
+        XAUTHORITY=$(ls -t "$XDG_RUNTIME_DIR"/.mutter-Xwaylandauth.* 2>/dev/null | head -1) && [ -n "$XAUTHORITY" ] && break
+        sleep 0.1
+    done
+    export XAUTHORITY
+    N=$HOME/mesa/builddir-win64/src/virtio/neptune
+    cp -f "$N/d3d11.dll" "$N/dxgi.dll" "$N/d3d12.dll" "$N/nptunix/nptunix.dll" "$SYS32/"
+    rm -f "$SYS32/d3d10core.dll" "$SYS32/d3d9.dll"
+    # Wine maps a builtin DLL found on WINEDLLPATH, paired with the unixlib
+    # next to it: keep both fresh in ~/npt-stage
+    mkdir -p "$HOME/npt-stage"
+    cp -f "$N/nptunix/nptunix.dll" "$HOME/npt-stage/"
+    "$HOME/bin/build-nptunix-x86" "$HOME/npt-stage/nptunix.so" >/dev/null
+    export WINEDLLPATH=$HOME/npt-stage
+    export WINEDLLOVERRIDES="d3d11,dxgi,d3d12,d3dcompiler_47=n,b;nptunix=b;nvapi,nvapi64="
+    ;;
+dxvk)
+    D=$HOME/dxvk/builddir-win64/src
+    cp -f "$D/d3d11/d3d11.dll" "$D/dxgi/dxgi.dll" "$D/d3d10/d3d10core.dll" "$D/d3d9/d3d9.dll" "$SYS32/"
+    rm -f "$SYS32/nptunix.dll"
+    export WINEDLLOVERRIDES="d3d9,d3d10core,d3d11,dxgi=n,b;nvapi,nvapi64="
+    export DXVK_LOG_LEVEL=info DXVK_LOG_PATH=$LOGDIR
+    ;;
+wine)
+    # this Wine resolves a builtin d3d11 only when it is in system32
+    PE=$W/lib/wine/x86_64-windows
+    fex cp -f "$PE/d3d11.dll" "$PE/dxgi.dll" "$PE/d3d10core.dll" "$PE/d3d9.dll" "$PE/wined3d.dll" "$SYS32/"
+    rm -f "$SYS32/nptunix.dll"
+    export WINEDLLOVERRIDES="d3d9,d3d10core,d3d11,dxgi=b;nvapi,nvapi64="
+    # no working OpenGL under FEX
+    export WINE_D3D_CONFIG=renderer=vulkan
+    ;;
+*) echo "unknown backend $BACKEND" >&2; exit 2 ;;
+esac
+
+# FEX's x86 memory-ordering emulation is only safe to turn off when the
+# hypervisor provides TSO (UTM's TSO setting, recorded by the provisioning in
+# ~/.config/utmbot/hw-tso): ~13% on Fire Strike GT1.
+if [ -f "$HOME/.config/utmbot/hw-tso" ]; then
+    export FEX_TSOENABLED=0 FEX_VECTORTSOENABLED=0 FEX_HALFBARRIERTSOENABLED=0 FEX_MEMCPYSETTSOENABLED=0
+fi
+export WINE_LARGE_ADDRESS_AWARE=1
+: "${WINEDEBUG:=err+seh,fixme-all}"; export WINEDEBUG
+export MESA_LOG_FILE=$LOGDIR/$BACKEND.mesa.log
+
+if [[ ! "$EXE" =~ ^[A-Za-z]:[\\/] ]]; then
+    [ -f "$EXE" ] || { echo "not found: $EXE" >&2; exit 1; }
+    EXE=$(readlink -f "$EXE")
+    cd "$(dirname "$EXE")"
+fi
+echo "=== npt-wine [$BACKEND] $EXE $* ($(date))" >&2
+if [[ "${EXE,,}" =~ \.(bat|cmd)$ ]]; then
+    exec FEXBash -c 'exec "$@"' fex "$WINELOADER" cmd /c "$EXE" "$@"
+fi
+exec FEXBash -c 'exec "$@"' fex "$WINELOADER" "$EXE" "$@"

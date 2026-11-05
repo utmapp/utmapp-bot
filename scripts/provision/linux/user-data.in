@@ -1,0 +1,39 @@
+#cloud-config
+# Seed for provision-linux-test.sh (NoCloud, volume CIDATA).  @...@ are
+# filled in by the media stage.
+hostname: @HOSTNAME@
+users:
+  - name: @USER@
+    gecos: utmbot test user
+    groups: [adm, sudo, video, render, audio, input]
+    shell: /bin/bash
+    # passwordless sudo: the provisioning steps install packages over SSH
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    lock_passwd: false
+    passwd: "@PASSWORD_HASH@"
+    ssh_authorized_keys:
+      - @PUBKEY@
+ssh_pwauth: false
+package_update: true
+packages:
+  - ubuntu-desktop-minimal
+  - openssh-server
+  - mesa-vulkan-drivers
+  - vulkan-tools
+  - x11-utils
+write_files:
+  # log straight into GNOME (on Wayland, with Xwayland for X11 clients)
+  - path: /etc/gdm3/custom.conf
+    content: |
+      [daemon]
+      AutomaticLoginEnable=true
+      AutomaticLogin=@USER@
+runcmd:
+  - [systemctl, set-default, graphical.target]
+  # no GNOME welcome wizard over the desktop
+  - [sh, -c, "mkdir -p /home/@USER@/.config && echo yes > /home/@USER@/.config/gnome-initial-setup-done && chown -R @USER@: /home/@USER@/.config"]
+# Power off, not reboot: a guest reboot right after the install hung with
+# every vCPU busy; the host starts the VM again and the desktop comes up
+power_state:
+  mode: poweroff
+  condition: true

@@ -1,0 +1,36 @@
+#!/bin/bash
+# build-nptunix-x86 [OUT] - build nptunix.so, the Wine unixlib Neptune's PE
+# DLLs call into, as an x86_64 Linux ELF.
+#
+# Mesa's meson builds it native (aarch64 here), but Wine runs x86_64 under
+# FEX and loads the unixlib in emulated space, so it must be x86_64.  It links
+# against the x86_64 libraries of the FEX rootfs.  Default OUT:
+# ~/npt-stage/nptunix.so, next to the nptunix.dll Wine pairs it with.
+set -euo pipefail
+CC=x86_64-linux-gnu-gcc
+R=$(ls -d "$HOME"/.local/share/fex-emu/RootFS/Ubuntu_24_04 "$HOME"/.fex-emu/RootFS/Ubuntu_24_04 2>/dev/null | head -1 || true)
+[ -n "$R" ] || { echo "no FEX Ubuntu_24_04 rootfs" >&2; exit 1; }
+MESA=${MESA:-$HOME/mesa}
+NEP=$MESA/src/virtio/neptune
+S=$NEP/nptunix
+OUT=${1:-$HOME/npt-stage/nptunix.so}
+mkdir -p "$(dirname "$OUT")"
+# up to date: nothing newer than OUT in the unixlib's sources or headers
+if [ -f "$OUT" ] && [ -z "${FORCE:-}" ] &&
+   [ -z "$(find "$S" "$NEP" -maxdepth 1 \( -name '*.c' -o -name '*.h' \) -newer "$OUT" -print -quit)" ]; then
+    echo "UP-TO-DATE $OUT"
+    exit 0
+fi
+INCS=(-I"$S" -I"$NEP" -I"$MESA/include")
+# the host's (arm64) headers are architecture-neutral
+IDA=(-idirafter /usr/include -idirafter /usr/include/libdrm)
+CF=(-fPIC -O2 -g -fvisibility=default -D_FILE_OFFSET_BITS=64 -Wall)
+# no -DNPT_HAVE_XCB_DRI3_SYNCOBJ: the rootfs's (24.04) libxcb-dri3 lacks
+# xcb_dri3_import_syncobj; the xcb_dri3_fence_from_fd fallback is used
+LIBS=(-L"$R/usr/lib/x86_64-linux-gnu" -l:libxcb.so.1 -l:libxcb-dri3.so.0 -l:libxcb-present.so.0 -l:libdrm.so.2)
+[ -e "$R/usr/lib/x86_64-linux-gnu/libxshmfence.so.1" ] && LIBS+=(-l:libxshmfence.so.1)
+"$CC" -shared "${CF[@]}" "${INCS[@]}" "${IDA[@]}" \
+    "$S/npt_unix.c" "$S/npt_unix_wsi.c" "$S/npt_unix_virtgpu.c" "$S/npt_display_drm.c" \
+    "${LIBS[@]}" -Wl,--no-undefined -o "$OUT"
+x86_64-linux-gnu-objdump -T "$OUT" | grep -q __wine_unix_call || { echo "$OUT has no __wine_unix_call" >&2; exit 1; }
+echo "BUILT $OUT"

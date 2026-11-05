@@ -1,0 +1,8 @@
+#!/bin/sh
+# utmbot, as one word for skills: zsh does not split "python3 path" held in a variable.
+root="$(cd "$(dirname "$0")/.." && pwd)"
+if [ "$1" = gh ]; then
+  shift
+  exec python3 "$root/scripts/ghbot" "$@"   # the GitHub poller (scripts/ghbot)
+fi
+exec python3 "$root/scripts/utmbot" "$@"

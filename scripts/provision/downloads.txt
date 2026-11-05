@@ -1,0 +1,26 @@
+# Installers used by provision-windows-dev.sh, the content stage of
+# provision-windows-test.sh and the prefix stage of provision-linux-test.sh
+# (the x64 GravityMark and Heaven go into its Wine prefix): <file> <sha256> <url>
+#
+# Not the UTM guest tools: UTM itself attaches those (its Install Windows
+# Guest Tools, by script), so the plugin never knows where they come from.
+#
+# Pinned to the versions on the golden "Windows Development" VM.  The host
+# downloads them once into ~/.utmapp-bot/cache/downloads/ and checks the hash; to update
+# one, change all three fields (shasum -a 256 <file>).  vs_community.exe is
+# only the Visual Studio 2022 bootstrapper: it installs the current 17.x.
+7z2605-arm64.exe 86d5790d5dd84cab4636c3bb7fab10d3ed7cd3e57e6119401bd2769e28165268 https://github.com/ip7z/7zip/releases/download/26.05/7z2605-arm64.exe
+Git-2.56.0.4-arm64.exe e7dcc4adbb0eb373064598cd18bc75e60128707d816ead51cd9bd98e356f0075 https://github.com/git-for-windows/git/releases/download/v2.56.0.windows.4/Git-2.56.0.4-arm64.exe
+cmake-4.4.5-windows-arm64.msi fcbdbd8327f1416bb34c566f413a9f92f1e35b014909dee89ce42035a131e206 https://github.com/Kitware/CMake/releases/download/v4.4.5/cmake-4.4.5-windows-arm64.msi
+python-3.15.2-arm64.exe a3957667a6305f0fa4c5ce6c73def927ddcad36190b9e27eb4a04e1a9a153c93 https://www.python.org/ftp/python/3.15.2/python-3.15.2-arm64.exe
+winfsp-2.2.26286.msi 293ffb9bcc0b625c85079fe85fa77f8fe98170aba51a02ac9c83d58f6c3b0e2f https://github.com/winfsp/winfsp/releases/download/v2.2B5/winfsp-2.2.26286.msi
+sshfs-win-3.7.21011-x64.msi 76080d7bfb1ba0a807f8874d07388bec4bc30893f2da511d5cb7a16d4490f7d1 https://github.com/winfsp/sshfs-win/releases/download/v3.7.21011/sshfs-win-3.7.21011-x64.msi
+vs_community.exe 13a57d61cd0e5d0b7f55ee2d84173374ceb5590eecbb17cec5b663ffaf4fb968 https://download.visualstudio.microsoft.com/download/pr/6bd63d7f-1818-4e03-a552-9feb11496c19/13a57d61cd0e5d0b7f55ee2d84173374ceb5590eecbb17cec5b663ffaf4fb968/vs_Community.exe
+wdksetup.exe ed82c46bd98e0f1d07fd6e5075900e42aedc3fa5e68c06a8764b3dc5303cff1b https://download.microsoft.com/download/41fb59c2-1723-45f9-a270-96b73ad58233/KIT_BUNDLE_WDK_MEDIACREATION/wdksetup.exe
+vc_redist.arm64.exe 5139e1440c3a20b92153a4db561c069a0175aaf76c276c3e5b6f56099edcf4b0 https://download.visualstudio.microsoft.com/download/pr/d7450eb5-03e1-436d-9e7e-deb5fe4759b3/5139E1440C3A20B92153A4DB561C069A0175AAF76C276C3E5B6F56099EDCF4B0/VC_redist.arm64.exe
+vc_redist.x64.exe cc0ff0eb1dc3f5188ae6300faef32bf5beeba4bdd6e8e445a9184072096b713b https://download.visualstudio.microsoft.com/download/pr/990c720a-46ce-4dc7-87b9-c2eb615d34b9/CC0FF0EB1DC3F5188AE6300FAEF32BF5BEEBA4BDD6E8E445A9184072096B713B/VC_redist.x64.exe
+vc_redist.x86.exe 0c09f2611660441084ce0df425c51c11e147e6447963c3690f97e0b25c55ed64 https://download.visualstudio.microsoft.com/download/pr/990c720a-46ce-4dc7-87b9-c2eb615d34b9/0C09F2611660441084CE0DF425C51C11E147E6447963C3690F97E0B25C55ED64/VC_redist.x86.exe
+GravityMark_1.89_arm64.msi 64d472da714c9a305b50b6d469165e74f8a250a066b2cd18de151be086a4a7ee https://tellusim.com/download/GravityMark_1.89_arm64.msi
+GravityMark_1.89.msi 38e32b475cf93eca2085334f7421fc738fb605c5b37f35e90e06d73a54169c8f https://tellusim.com/download/GravityMark_1.89.msi
+Unigine_Heaven-4.0.exe 497865a09af205a7d2e8812bfc2dd54870216cc1e95541b63cef89a4433b0e5f https://assets.unigine.com/d/Unigine_Heaven-4.0.exe
+directx_Jun2010_redist.exe 053f76dcbb28802e23341b6a787e3b0791c0fa5c8d4d011b1044172dbf89c73b https://download.microsoft.com/download/8/4/A/84A35BF1-DAFE-4AE8-82AF-AD2AE20B6B14/directx_Jun2010_redist.exe

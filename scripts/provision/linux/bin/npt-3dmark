@@ -1,0 +1,43 @@
+#!/bin/bash
+# npt-3dmark <fs|ts> [--backend neptune|dxvk|wine] - one 3DMark graphics
+# test 1 (Fire Strike or Time Spy) under npt-wine; prints the result as
+# "FPS <n> VALID|INVALID <status>", the line utmbot matrix reads.
+#
+# 3DMark's own validity check decides VALID: a run that lost focus or ran
+# windowed still produces a number.  The first run after a boot or a build
+# fills the shader cache; discard it.
+set -uo pipefail
+case "${1:-}" in
+    fs) DEF='C:/fs_gt1.3dmdef' ;;
+    ts) DEF='C:/ts_gt1.3dmdef' ;;
+    *) echo "usage: npt-3dmark <fs|ts> [--backend B]" >&2; exit 2 ;;
+esac
+shift
+PFX=$HOME/wine-prefixes/multi-backend/pfx
+MARK='C:/Program Files/UL/3DMark/3DMarkCmd.exe'
+RES=$PFX/drive_c/users/$(id -un)/Documents/3DMark
+[ -f "$PFX/drive_c/Program Files/UL/3DMark/3DMarkCmd.exe" ] || { echo "3DMark is not installed in $PFX" >&2; exit 1; }
+LOG=$(mktemp /tmp/npt-3dmark.XXXX.log)
+before=$(ls -t "$RES"/*.3dmark-result 2>/dev/null | head -1)
+setsid "$HOME/bin/npt-wine" "$@" "$MARK" --definition="$DEF" --online=off --systeminfo=off >"$LOG" 2>&1 </dev/null &
+pid=$!
+status=TIMEOUT
+for _ in $(seq 1 720); do
+    sleep 1
+    if grep -q "Wrote result to" "$LOG"; then status=DONE; break; fi
+    if grep -qiE "license key required" "$LOG"; then status=NOT_ACTIVATED; break; fi
+    if grep -qiE "ring fatal|Benchmark failed|Fatal error" "$LOG"; then status=FAILED; break; fi
+    kill -0 $pid 2>/dev/null || { status=EXITED; break; }
+done
+sleep 3
+pkill -x 3DMarkCmd.exe 2>/dev/null; pkill -f '[3]DMarkICFWorkload|[3]DMarkTimeSpy' 2>/dev/null
+kill $pid 2>/dev/null
+grep -iE "error|fail|license" "$LOG" | tail -5 >&2
+[ "$status" = DONE ] || { echo "RESULT $status (log $LOG)"; exit 1; }
+f=$(ls -t "$RES"/*.3dmark-result 2>/dev/null | head -1)
+[ -n "$f" ] && [ "$f" != "$before" ] || { echo "RESULT NO_RESULT (log $LOG)"; exit 1; }
+xml=$(unzip -p "$f" Arielle.xml 2>/dev/null)
+fps=$(printf '%s' "$xml" | grep -oE 'unit="fps">[0-9.]+' | head -1 | sed 's/.*>//')
+bad=$(printf '%s' "$xml" | grep -oE '<status code="[1-9][0-9]*">[^<]*' | head -1 | sed 's/<status code="//; s/">/ /')
+echo "FPS ${fps:-0} $([ -z "$bad" ] && echo VALID || echo "INVALID $bad")"
+rm -f "$LOG"

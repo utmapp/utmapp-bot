@@ -1,0 +1,186 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Autounattend.xml template for provision-windows-dev.sh.  The host script
+  substitutes @ARCH@, @LANG@, @USER@ and @PASSWORD@ and puts the result at the
+  root of the configuration ISO next to utmapp-bot\, where Windows Setup finds
+  it.  Every component must carry the guest's processorArchitecture or Setup
+  silently ignores it and turns interactive.
+
+  Passes:
+    windowsPE    - skip the Windows 11 hardware checks, wipe disk 0 (the NVMe
+                   drive; the USB CD drives are not disks) and install Pro.
+    specialize   - run utmapp-bot\specialize.cmd from the configuration ISO:
+                   it copies the ISO to C:\utmapp-bot\media and turns off UAC,
+                   SmartScreen and the firewall before first logon.
+    oobeSystem   - create the local administrator, skip every OOBE page, log
+                   on automatically and run firstlogon.ps1 (guest tools,
+                   OpenSSH Server, the host's SSH key).
+-->
+<unattend xmlns="urn:schemas-microsoft-com:unattend" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+    <settings pass="windowsPE">
+        <component name="Microsoft-Windows-International-Core-WinPE" processorArchitecture="@ARCH@" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+            <SetupUILanguage>
+                <UILanguage>@LANG@</UILanguage>
+            </SetupUILanguage>
+            <InputLocale>@LANG@</InputLocale>
+            <SystemLocale>@LANG@</SystemLocale>
+            <UILanguage>@LANG@</UILanguage>
+            <UserLocale>@LANG@</UserLocale>
+        </component>
+        <component name="Microsoft-Windows-Setup" processorArchitecture="@ARCH@" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+            <Diagnostics>
+                <OptIn>false</OptIn>
+            </Diagnostics>
+            <RunSynchronous>
+                <RunSynchronousCommand wcm:action="add">
+                    <Order>1</Order>
+                    <Path>reg add HKLM\SYSTEM\Setup\LabConfig /v BypassTPMCheck /t REG_DWORD /d 1 /f</Path>
+                </RunSynchronousCommand>
+                <RunSynchronousCommand wcm:action="add">
+                    <Order>2</Order>
+                    <Path>reg add HKLM\SYSTEM\Setup\LabConfig /v BypassSecureBootCheck /t REG_DWORD /d 1 /f</Path>
+                </RunSynchronousCommand>
+                <RunSynchronousCommand wcm:action="add">
+                    <Order>3</Order>
+                    <Path>reg add HKLM\SYSTEM\Setup\LabConfig /v BypassRAMCheck /t REG_DWORD /d 1 /f</Path>
+                </RunSynchronousCommand>
+                <RunSynchronousCommand wcm:action="add">
+                    <Order>4</Order>
+                    <Path>reg add HKLM\SYSTEM\Setup\LabConfig /v BypassCPUCheck /t REG_DWORD /d 1 /f</Path>
+                </RunSynchronousCommand>
+            </RunSynchronous>
+            <DiskConfiguration>
+                <Disk wcm:action="add">
+                    <DiskID>0</DiskID>
+                    <WillWipeDisk>true</WillWipeDisk>
+                    <CreatePartitions>
+                        <CreatePartition wcm:action="add">
+                            <Order>1</Order>
+                            <Type>EFI</Type>
+                            <Size>200</Size>
+                        </CreatePartition>
+                        <CreatePartition wcm:action="add">
+                            <Order>2</Order>
+                            <Type>MSR</Type>
+                            <Size>16</Size>
+                        </CreatePartition>
+                        <CreatePartition wcm:action="add">
+                            <Order>3</Order>
+                            <Type>Primary</Type>
+                            <Extend>true</Extend>
+                        </CreatePartition>
+                    </CreatePartitions>
+                    <ModifyPartitions>
+                        <ModifyPartition wcm:action="add">
+                            <Order>1</Order>
+                            <PartitionID>1</PartitionID>
+                            <Format>FAT32</Format>
+                        </ModifyPartition>
+                        <ModifyPartition wcm:action="add">
+                            <Order>2</Order>
+                            <PartitionID>2</PartitionID>
+                        </ModifyPartition>
+                        <ModifyPartition wcm:action="add">
+                            <Order>3</Order>
+                            <PartitionID>3</PartitionID>
+                            <Format>NTFS</Format>
+                            <Letter>C</Letter>
+                        </ModifyPartition>
+                    </ModifyPartitions>
+                </Disk>
+            </DiskConfiguration>
+            <ImageInstall>
+                <OSImage>
+                    <InstallTo>
+                        <DiskID>0</DiskID>
+                        <PartitionID>3</PartitionID>
+                    </InstallTo>
+                    <Compact>false</Compact>
+                </OSImage>
+            </ImageInstall>
+            <UserData>
+                <!-- Generic Windows 11 Pro key: selects the edition, does not activate. -->
+                <ProductKey>
+                    <Key>VK7JG-NPHTM-C97JM-9MPGT-3V66T</Key>
+                    <WillShowUI>OnError</WillShowUI>
+                </ProductKey>
+                <AcceptEula>true</AcceptEula>
+            </UserData>
+        </component>
+    </settings>
+    <settings pass="offlineServicing">
+        <component name="Microsoft-Windows-LUA-Settings" processorArchitecture="@ARCH@" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+            <EnableLUA>false</EnableLUA>
+        </component>
+    </settings>
+    <settings pass="specialize">
+        <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="@ARCH@" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+            <ComputerName>*</ComputerName>
+        </component>
+        <component name="Microsoft-Windows-Security-SPP-UX" processorArchitecture="@ARCH@" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+            <SkipAutoActivation>true</SkipAutoActivation>
+        </component>
+        <component name="Microsoft-Windows-SQMApi" processorArchitecture="@ARCH@" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+            <CEIPEnabled>0</CEIPEnabled>
+        </component>
+        <component name="Microsoft-Windows-Deployment" processorArchitecture="@ARCH@" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+            <RunSynchronous>
+                <RunSynchronousCommand wcm:action="add">
+                    <Order>1</Order>
+                    <Path>cmd.exe /c for %i in (D E F G H I J K L M N O P) do @if exist %i:\utmapp-bot\specialize.cmd call %i:\utmapp-bot\specialize.cmd %i:\utmapp-bot</Path>
+                </RunSynchronousCommand>
+            </RunSynchronous>
+        </component>
+    </settings>
+    <settings pass="oobeSystem">
+        <component name="Microsoft-Windows-International-Core" processorArchitecture="@ARCH@" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+            <InputLocale>@LANG@</InputLocale>
+            <SystemLocale>@LANG@</SystemLocale>
+            <UILanguage>@LANG@</UILanguage>
+            <UserLocale>@LANG@</UserLocale>
+        </component>
+        <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="@ARCH@" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+            <OOBE>
+                <HideEULAPage>true</HideEULAPage>
+                <HideOEMRegistrationScreen>true</HideOEMRegistrationScreen>
+                <HideOnlineAccountScreens>true</HideOnlineAccountScreens>
+                <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
+                <HideLocalAccountScreen>true</HideLocalAccountScreen>
+                <ProtectYourPC>3</ProtectYourPC>
+                <VMModeOptimizations>
+                    <SkipWinREInitialization>true</SkipWinREInitialization>
+                </VMModeOptimizations>
+            </OOBE>
+            <UserAccounts>
+                <LocalAccounts>
+                    <LocalAccount wcm:action="add">
+                        <Name>@USER@</Name>
+                        <DisplayName>@USER@</DisplayName>
+                        <Group>Administrators</Group>
+                        <Password>
+                            <Value>@PASSWORD@</Value>
+                            <PlainText>true</PlainText>
+                        </Password>
+                    </LocalAccount>
+                </LocalAccounts>
+            </UserAccounts>
+            <!-- firstlogon.ps1 makes automatic logon permanent. -->
+            <AutoLogon>
+                <Enabled>true</Enabled>
+                <LogonCount>9999999</LogonCount>
+                <Username>@USER@</Username>
+                <Password>
+                    <Value>@PASSWORD@</Value>
+                    <PlainText>true</PlainText>
+                </Password>
+            </AutoLogon>
+            <FirstLogonCommands>
+                <SynchronousCommand wcm:action="add">
+                    <Order>1</Order>
+                    <CommandLine>powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\utmapp-bot\media\firstlogon.ps1</CommandLine>
+                    <Description>Guest tools, OpenSSH Server and SSH keys</Description>
+                </SynchronousCommand>
+            </FirstLogonCommands>
+        </component>
+    </settings>
+</unattend>
