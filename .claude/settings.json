@@ -1,0 +1,10 @@
+{
+  "extraKnownMarketplaces": {
+    "utmapp-bot": {
+      "source": { "source": "directory", "path": "." }
+    }
+  },
+  "enabledPlugins": {
+    "utmapp-bot@utmapp-bot": true
+  }
+}

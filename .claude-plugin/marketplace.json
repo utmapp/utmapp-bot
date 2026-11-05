@@ -1,0 +1,14 @@
+{
+  "name": "utmapp-bot",
+  "description": "The utmapp-bot plugin, published from its own repository.",
+  "owner": {
+    "name": "osy"
+  },
+  "plugins": [
+    {
+      "name": "utmapp-bot",
+      "source": "./",
+      "description": "Skills for building, testing and debugging UTM on Apple silicon: provision Windows and Linux VMs, build UTM and its dependencies, drive, measure and debug VMs with a shared harness, work on the VirtIO GPU stack (Neptune D3D, Venus Vulkan), and run Auto-Triage and moderation for the UTM games database."
+    }
+  ]
+}
