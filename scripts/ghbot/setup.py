@@ -89,10 +89,15 @@ def install(a):
             env[k] = cfg[k]
     if a.paused:
         S.PAUSED.write_text("installed paused by github-setup --paused\n")
-    d = I.plist(AGENT, [py, str(I.LIB / "ghbot"), "run"], env, S.D / "logs", keepalive=True)
+    launcher, how = I.install_launcher()
+    I.say(f"agent launcher {launcher.parents[2].name}: {how}")
+    d = I.plist(AGENT, [launcher, py, str(I.LIB / "ghbot"), "run"], env, S.D / "logs", keepalive=True)
     d["WorkingDirectory"] = str(S.D)
     d["AbandonProcessGroup"] = True  # a restart of the agent must not take running sessions down
-    I.say(f"agent {I.label(AGENT)}: {I.load_agent(AGENT, d, restart=changed)}")
+    I.say(f"agent {I.label(AGENT)}: {I.load_agent(AGENT, d, restart=changed or how == 'built')}")
+    from agentlib.permissions import request_all
+    request_all(launcher, py, HERE.parents[1], cfg.get("UTM_APP") or "/Applications/UTM.app",
+                I.DATA, I.say, I.warn)
 
     _, work = __import__("ghbot.jobs", fromlist=["cfg_paths"]).cfg_paths(cfg)
     I.trust_workdir(Path(work).resolve())
@@ -114,6 +119,7 @@ def check():
     r = subprocess.run(["launchctl", "print", f"gui/{I.UID}/{I.label(AGENT)}"], capture_output=True, text=True)
     state = next((l.split("=", 1)[1].strip() for l in r.stdout.splitlines() if l.strip().startswith("state =")), None)
     print(f"agent     {I.label(AGENT)}: {state or 'NOT loaded'}")
+    print(f"launcher  {I.launcher_check() or 'installed and signed'}")
     st = S.load()
     print(f"poll      last {st.get('last_poll')}, failures {st.get('poll_failures', 0)}")
     I.power_check()

@@ -74,6 +74,11 @@ $UB gh retry PR             # after clearing a blocker (or a failed session)
 $UB gh release PR           # free a PR for other Macs (also one whose Mac is gone)
 ```
 
+The agent runs under the `UTM Bot Agent` launcher app, and setup asks for
+its macOS permissions (Local Network, controlling UTM, UTM's data, Screen
+Recording) while the user is at the Mac, as db-setup does; the two setups
+share the launcher and its permissions.
+
 A blocked session (a macOS permission dialog, an expired token), a session
 that failed three times, and the Claude Code login nearing expiry each send
 one push notification to the user's phone (a short Remote Control session,

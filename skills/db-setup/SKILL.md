@@ -83,10 +83,27 @@ then loads three LaunchAgents and checks each step:
 Then it runs the first backup and shows what the dispatcher would start
 (a dry run).
 
-macOS asks its permission questions (UTM automation, Screen Recording) the
-first time a dispatched session needs them. That session reports a
-blocker, and the user gets a push notification over Remote Control to click
-**Allow** on the Mac. Remote Control is off for dispatched sessions
+The dispatcher runs under a small ad-hoc signed launcher app, `UTM Bot Agent`
+(`~/.utmapp-bot/agents/UTM Bot Agent.app`, built from
+`scripts/agentlib/launcher`). macOS attributes a session's privacy-guarded
+actions to it, so one **Allow** covers every session and survives restarts
+and Python upgrades. With Homebrew's Python as the agent's program the
+Local Network grant did not hold, and Apple's own programs cannot pass one
+down past `claude`. No certificate is needed. Setup rebuilds the launcher
+only when its source changes, since a rebuild may make macOS ask again.
+
+Setup then asks for every permission sessions need, all at once while the
+user is at the Mac: **Local Network** (SSH to the VMs), **controlling UTM**
+(Automation), **UTM's data** (its preferences), and **Screen Recording**.
+The user clicks **Allow** on each "UTM Bot Agent" dialog. UTM's data has
+no dialog, and its per-app switch under Files and Folders does not stick:
+setup opens Full Disk Access and shows the launcher in Finder, and the user
+drags it into the list and switches it on (again whenever the launcher is
+rebuilt). Setup checks real read and write access, prints what is granted
+and warns about what is missing. `--permissions` asks again on
+its own. A permission that is still missing makes the first session that
+needs it report a blocker, which reaches the user as a push notification
+over Remote Control. Remote Control is off for dispatched sessions
 otherwise. The dispatcher also warns, by push notification, 3 days and 1
 day before the Claude Code login expires.
 

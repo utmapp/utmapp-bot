@@ -7,6 +7,7 @@ import os
 import plistlib
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 DATA = Path(os.environ.get("UTMAPP_BOT_DATA", "~/.utmapp-bot")).expanduser()
@@ -89,7 +90,12 @@ def load_agent(short, d, restart=False):
     if loaded:
         subprocess.run(["launchctl", "bootout", f"gui/{UID}/{label(short)}"], capture_output=True)
     path.write_bytes(data)
-    r = subprocess.run(["launchctl", "bootstrap", f"gui/{UID}", str(path)], capture_output=True, text=True)
+    for _ in range(10):
+        # right after a bootout the old job may still be exiting: "5: Input/output error"
+        r = subprocess.run(["launchctl", "bootstrap", f"gui/{UID}", str(path)], capture_output=True, text=True)
+        if r.returncode == 0 or not loaded:
+            break
+        time.sleep(1)
     if r.returncode != 0:
         raise RuntimeError(f"launchctl bootstrap {path}: {r.stderr.strip()}")
     return "restarted" if loaded else "loaded"
@@ -99,6 +105,77 @@ def unload_agent(short):
     path = LA / f"{label(short)}.plist"
     subprocess.run(["launchctl", "bootout", f"gui/{UID}/{label(short)}"], capture_output=True)
     path.unlink(missing_ok=True)
+
+
+# ---- the launcher the session-starting agents run under ----------------------------------
+#
+# macOS attributes a process's local-network connections (to the VMs on UTM's
+# shared network) to its *responsible* process: for a LaunchAgent, the job's
+# own program. Under Homebrew's Python as that program the grant did not
+# hold (Allow helped only the running process), and an Apple program such as
+# /usr/bin/python3 cannot pass one down past a non-Apple child like `claude`.
+# So the agents that start sessions run under this small app (ad-hoc
+# signed: no certificate needed), which
+# posix_spawns the real command and waits: one Allow covers every session,
+# and the grant survives restarts and Python upgrades.
+#
+# macOS matches a blocked process to an app by its executable's build UUID
+# through Launch Services. Two binaries built alike share that UUID, and then
+# the prompt goes to (or is skipped for) the other app, so the launcher is
+# linked with a random UUID and registered with Launch Services before it
+# first runs. Ad hoc, the grant was kept across fresh launches when tested on
+# macOS 27; a rebuild changes the code hash, so it is rebuilt only when its
+# source changes.
+
+LAUNCHER_SRC = AGENTLIB / "launcher"
+LAUNCHER_APP = AGENTS / "UTM Bot Agent.app"
+LAUNCHER = LAUNCHER_APP / "Contents" / "MacOS" / "utmbot-agent"
+LSREGISTER = ("/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework"
+              "/Support/lsregister")
+
+
+
+def install_launcher():
+    """Build and sign the launcher app when its source changed; returns
+    (path of its executable, what happened). Rebuilding changes its code
+    hash, so it is rebuilt only when the source changes."""
+    h = hashlib.sha256(b"adhoc,random_uuid")  # the build recipe: a change rebuilds
+    for f in ("launcher.c", "Info.plist"):
+        h.update(f.encode() + (LAUNCHER_SRC / f).read_bytes())
+    digest = h.hexdigest()[:16]
+    stamp = AGENTS / ".launcher-version"
+    valid = LAUNCHER.exists() and _run(["codesign", "--verify", "--strict", str(LAUNCHER_APP)]).returncode == 0
+    if valid and stamp.exists() and stamp.read_text().strip() == digest:
+        return LAUNCHER, "unchanged"
+    new = AGENTS / f"launcher.new-{os.getpid()}" / LAUNCHER_APP.name
+    shutil.rmtree(new.parent, ignore_errors=True)
+    (new / "Contents" / "MacOS").mkdir(parents=True)
+    shutil.copy2(LAUNCHER_SRC / "Info.plist", new / "Contents" / "Info.plist")
+    r = _run(["clang", "-O2", "-arch", "arm64", "-arch", "x86_64", "-Wl,-random_uuid", "-o",
+              str(new / "Contents" / "MacOS" / LAUNCHER.name), str(LAUNCHER_SRC / "launcher.c")])
+    if r.returncode != 0:
+        raise RuntimeError(f"building the agent launcher failed (Xcode command line tools?): {r.stderr.strip()}")
+    r = _run(["codesign", "--force", "--sign", "-", str(new)])
+    if r.returncode != 0:
+        raise RuntimeError(f"signing the agent launcher failed: {r.stderr.strip()}")
+    if LAUNCHER_APP.exists():
+        shutil.rmtree(LAUNCHER_APP)
+    new.replace(LAUNCHER_APP)
+    shutil.rmtree(new.parent, ignore_errors=True)
+    # known to Launch Services before its first run, or macOS cannot match it
+    # to its Local Network entry and denies without asking
+    _run([LSREGISTER, "-f", str(LAUNCHER_APP)])
+    stamp.write_text(digest + "\n")
+    return LAUNCHER, "built"
+
+
+def launcher_check():
+    """'' when the launcher is installed and signed, else what is wrong."""
+    if not LAUNCHER.exists():
+        return f"{LAUNCHER_APP} is missing (re-run the setup)"
+    r = _run(["codesign", "--verify", "--strict", str(LAUNCHER_APP)])
+    return "" if r.returncode == 0 else f"{LAUNCHER_APP} has a broken signature: {r.stderr.strip()}"
+
 
 
 def agent_path(claude_bin=None, python=None):

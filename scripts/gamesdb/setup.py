@@ -33,6 +33,8 @@ Options:
   --no-dispatch         install the tunnel and backups only
   --paused              install the dispatcher paused (`gamesdb dispatch resume` starts it)
   --skip-checks         do not run the first backup and the dispatcher dry run
+  --permissions         only ask macOS again for the agents' permissions (Local
+                        Network, controlling UTM, UTM's data, Screen Recording)
 """
 
 import argparse
@@ -311,6 +313,11 @@ def check(cfg):
         print(f"backup    last ok {b.get('last_success_at')}; last error: {b.get('last_error')}")
     except (OSError, ValueError):
         print("backup    none yet")
+    if (LA / f"{LABEL}.dispatch.plist").exists():
+        from agentlib.install import launcher_check
+        lc = launcher_check()
+        print(f"launcher  {lc or 'installed and signed'}")
+        ok &= not lc
     v = LIB / "gamesdb" / ".version"
     print(f"scripts   {LIB / 'gamesdb'} version {v.read_text().strip() if v.exists() else 'NOT installed'}")
     w = sleep_settings()
@@ -319,6 +326,16 @@ def check(cfg):
     u = utm_check(cfg, Path(cfg.get("GAMESDB_PLUGIN_DIR") or HERE.parents[1]))
     print(f"utm       {u or (cfg.get('UTM_APP') or '/Applications/UTM.app') + ': current'}")
     return ok and healthy and not u
+
+
+def ask_permissions(cfg):
+    """Have macOS ask now, under the launcher, for what sessions will need."""
+    from agentlib.install import install_launcher
+    from agentlib.permissions import request_all
+    launcher, _ = install_launcher()
+    plugin = Path(cfg.get("GAMESDB_PLUGIN_DIR") or HERE.parents[1])
+    return request_all(launcher, shutil.which("python3") or sys.executable, plugin,
+                       cfg.get("UTM_APP") or "/Applications/UTM.app", DATA, say, warn)
 
 
 # ---- main ---------------------------------------------------------------------------------
@@ -339,6 +356,7 @@ def main(argv):
     p.add_argument("--no-dispatch", action="store_true")
     p.add_argument("--paused", action="store_true")
     p.add_argument("--skip-checks", action="store_true")
+    p.add_argument("--permissions", action="store_true")
     p.add_argument("--check", action="store_true")
     p.add_argument("--uninstall", action="store_true")
     a = p.parse_args(argv)
@@ -346,6 +364,8 @@ def main(argv):
     cfg = tunnel.config()
     if a.check:
         return 0 if check(cfg) else 1
+    if a.permissions:
+        return 0 if ask_permissions(cfg) else 1
     if a.uninstall:
         for name in ("dispatch", "backup", "tunnel"):
             unload_agent(name)
@@ -428,8 +448,12 @@ def main(argv):
         paused = tunnel.STATE / "dispatch" / "PAUSED"
         if a.paused:
             paused.write_text("installed paused by db-setup --paused\n")
-        load_agent("dispatch", plist_for("dispatch", [py, str(lib / "dispatch.py"), "run"], env,
-                                         keepalive=True), code_changed)
+        from agentlib.install import install_launcher
+        launcher, how = install_launcher()
+        say(f"agent launcher {launcher.parents[2].name}: {how}")
+        load_agent("dispatch", plist_for("dispatch", [str(launcher), py, str(lib / "dispatch.py"), "run"],
+                                         env, keepalive=True), code_changed or how == "built")
+        ask_permissions(cfg)
 
     # ---- first runs
     if not a.skip_checks:
