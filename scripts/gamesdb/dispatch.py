@@ -1,7 +1,7 @@
 """Turn the games database's work feed into Claude Code sessions.
 
 usage: python3 dispatch.py run | tick [--dry-run] | status | pause | resume
-                          | retry JOB | session PROMPT [--kind K] [--timeout S]
+                          | retry JOB [--prompt TEXT] | session PROMPT [--kind K] [--timeout S]
        (also: gamesdb dispatch …)
 
 run     the agent db-setup installs (a LaunchAgent, KeepAlive): every 15
@@ -11,7 +11,8 @@ tick    one poll and one round of starting work (--dry-run: print the
         `claude` commands instead of running them).
 status  jobs, sessions, the poll cursor, the usage-limit cooldown.
 pause   stop starting new sessions (running ones go on); resume undoes it.
-retry   resume a failed job at the next round.
+retry   resume a failed, blocked or waiting job within a minute (also while
+        the agent runs); --prompt sets what the session is told.
 session run one prompt as a dispatched session and wait for it (db-setup
         runs one so macOS asks its permission questions while someone is at
         the Mac).
@@ -79,6 +80,7 @@ GAMESDB_LEASE_TTL (seconds a lease lasts without renewal, default 1200).
 """
 
 import argparse
+import contextlib
 import datetime as dt
 import fcntl
 import hashlib
@@ -191,6 +193,24 @@ def save(st):
     tmp = STATE_FILE.with_suffix(".tmp")
     tmp.write_text(json.dumps(st, indent=2))
     tmp.replace(STATE_FILE)
+
+
+@contextlib.contextmanager
+def locked_state(write=True):
+    """The state, read fresh under a lock and written back when the block
+    ends (also after an error, as the agent's loop always did). Every writer
+    goes through this: the agent and `gamesdb dispatch retry|tick|session`
+    run as separate processes, and a copy kept in memory across rounds would
+    overwrite what another one changed."""
+    D.mkdir(parents=True, exist_ok=True)
+    with open(D / "state.lock", "w") as lk:
+        fcntl.flock(lk, fcntl.LOCK_EX)
+        st = load()
+        try:
+            yield st
+        finally:
+            if write:
+                save(st)
 
 
 def cfg():
@@ -868,22 +888,22 @@ def run():
     c = cfg()
     log(f"dispatcher up: plugin {c['plugin']}, workdir {c['workdir']}, every {c['every']} s")
     # sessions started before a restart: still running ones are watched by
-    # pid (alive()); the others are treated as ended
-    st = load()
+    # pid (alive()); the others are treated as ended. The state is read fresh
+    # each round, so `gamesdb dispatch retry` and the like take effect.
     last_poll = 0
     while True:
         try:
-            if now() - st.get("login_checked_ts", 0) >= 3600:
-                st["login_checked_ts"] = now()
-                check_login(st, c)
-            heartbeat(st)
-            if now() - last_poll >= c["every"]:
-                last_poll = now()
-                tick(st, c)
-            else:
-                supervise(st)
-                schedule(st, c)
-            save(st)
+            with locked_state() as st:
+                if now() - st.get("login_checked_ts", 0) >= 3600:
+                    st["login_checked_ts"] = now()
+                    check_login(st, c)
+                heartbeat(st)
+                if now() - last_poll >= c["every"]:
+                    last_poll = now()
+                    tick(st, c)
+                else:
+                    supervise(st)
+                    schedule(st, c)
         except Exception as e:  # keep the agent alive; launchd would restart it anyway
             log(f"error: {type(e).__name__}: {e}")
         time.sleep(60)
@@ -927,6 +947,7 @@ def main(argv):
     sub.add_parser("pause")
     sub.add_parser("resume")
     s = sub.add_parser("retry"); s.add_argument("job")
+    s.add_argument("--prompt", help="what the resumed session is told (default: its own resume note)")
     s = sub.add_parser("session", help="run one prompt as a dispatched session and wait for it")
     s.add_argument("prompt"); s.add_argument("--kind", default="check"); s.add_argument("--timeout", type=int, default=1800)
     a = p.parse_args(argv)
@@ -944,42 +965,46 @@ def main(argv):
         PAUSED.unlink(missing_ok=True)
         print("RESUMED")
         return 0
-    st = load()
     if a.cmd == "session":
         # one job through the same start/supervise/finish path the agent
         # uses; db-setup runs one so macOS asks its permission questions
         # while someone is at the Mac
         c = cfg()
         jid = f"{a.kind}:{time.strftime('%Y%m%d%H%M%S')}"
-        job = st["jobs"][jid] = new_job(jid, a.kind, a.kind, "1", a.prompt)
-        start(st, job, c)
-        save(st)
+        with locked_state() as st:
+            job = st["jobs"][jid] = new_job(jid, a.kind, a.kind, "1", a.prompt)
+            start(st, job, c)
         t0 = now()
         while job["status"] == "running" and now() - t0 < a.timeout:
             time.sleep(5)
-            supervise(st)
-        save(st)
+            with locked_state() as st:
+                supervise(st)
+                job = st["jobs"][jid]
         res = last_result(job["log"]) or {}
         print(json.dumps({"job": jid, "status": job["status"], "session_id": job["session_id"],
                           "log": job["log"], "result": (res.get("result") or "")[-1500:]}, indent=2))
         return 0 if job["status"] == "done" else 1
     if a.cmd == "retry":
-        j = st["jobs"].get(a.job)
-        if not j:
-            print(f"no job {a.job}", file=sys.stderr)
-            return 1
-        j.update(status="waiting", resume_after=0, attempts=0, dangling=0,
-                 resume_prompt=j.get("resume_prompt") or "Continue where you stopped.")
-        save(st)
-        print(f"{a.job} will be resumed at the next round")
+        with locked_state() as st:
+            j = st["jobs"].get(a.job)
+            if not j:
+                print(f"no job {a.job}", file=sys.stderr)
+                return 1
+            if j["status"] in ("running", "remote"):
+                print(f"{a.job} is {j['status']}; nothing to retry", file=sys.stderr)
+                return 1
+            j.update(status="waiting", resume_after=0, attempts=0, dangling=0,
+                     resume_prompt=a.prompt or j.get("resume_prompt") or "Continue where you stopped.")
+            if a.prompt:
+                j["wait_reason"] = "resumed early by hand"
+        print(f"{a.job} will be resumed within a minute"
+              + (" (the dispatcher is paused)" if PAUSED.exists() else ""))
         return 0
     # tick
     c = cfg()
-    tick(st, c, a.dry_run)
-    if not a.dry_run:
-        save(st)
+    with locked_state(write=not a.dry_run) as st:
+        tick(st, c, a.dry_run)
     return 0
-
 
 if __name__ == "__main__":
     tunnel.cli(main)
