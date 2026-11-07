@@ -33,6 +33,7 @@ import subprocess
 import time
 import urllib.parse
 import urllib.request
+from pathlib import Path
 
 from . import remote
 from .common import DATA, Fail, die, ensure_dir, log, run
@@ -636,11 +637,139 @@ Get-Process | Where-Object {{ $_.Path -and $_.Path.StartsWith($d, [StringCompari
     return [l[5:] for l in out.splitlines() if l.startswith("PROC ")]
 
 
+# A launch is a "game action" in the client: a series of tasks (updating, cloud
+# sync, EULAs, creating the process), some of which ask the user.  The UI
+# answers most of those itself at once (ShowInterstitials, CreatingProcess);
+# the ones it cannot leave the action waiting (bWaitingForUI) behind a dialog
+# nobody sees in an unattended run.  The answers below are the client's own:
+# Steam's UI (steamui, LaunchApp's OnGameActionUserRequest) answers its
+# "Cloud Out of Date" dialog (SynchronizingCloud "pendingcloudsessions",
+# after the same account played on another PC, e.g. the Steam VM) with
+# ContinueGameAction(id, "IgnorePendingCloudSessions") for "Play anyway".
+_ACTIONS_JS = r"""SteamClient.Apps.GetActiveGameActions().then(acts => (acts || [])
+  .filter(a => String(a.gameid) === %s)
+  .map(a => ({id: a.nGameActionID, action: a.strActionName, task: a.strTaskName,
+              details: a.strTaskDetails, waiting: !!a.bWaitingForUI})))"""
+
+# The triage account's standing answers: (task, details) -> ContinueGameAction's argument
+STANDING_ANSWERS = {
+    ("SynchronizingCloud", "pendingcloudsessions"): "IgnorePendingCloudSessions",   # "Play anyway"
+}
+
+# The Wine log (bottles) has the same request when DevTools cannot be asked
+_WAITING_LOG = re.compile(r'GameAction \[AppID (\d+), ActionID (\d+)\] : (\w+) waiting for user '
+                          r'response to (\w+) \\?"([^"\\]*)')
+
+
+def game_actions(vm, appid):
+    """The client's active game actions for appid: id, action, task, details,
+    waiting (for an answer from the UI)."""
+    return evaluate(vm, _ACTIONS_JS % json.dumps(str(int(appid)))) or []
+
+
+def _close_cloud_dialog(vm):
+    """The client's own "Cloud Out of Date" dialog stays open after the action
+    was answered through the API.  Its "Play anyway" then only closes it (the
+    action is over; checked: no second launch)."""
+    js = r"""(() => { const b = [...document.querySelectorAll("button, [role=button], .DialogButton")]
+      .filter(x => /^Play anyway$/i.test((x.innerText || "").trim()));
+      b.forEach(x => x.click()); return b.length; })()"""
+    for t in targets(vm):
+        if t.get("type") == "page" and t.get("title") not in ("SharedJSContext",) and \
+                t.get("webSocketDebuggerUrl"):
+            try:
+                if evaluate(vm, js, target=t, timeout=15):
+                    return True
+            except Fail:
+                pass
+    return False
+
+
+class _LaunchWatch:
+    """Watches a launch's game action: answers what the triage account has a
+    standing answer for, and fails fast on any other request that waits."""
+
+    def __init__(self, vm, appid, patience_s=10):
+        self.vm, self.appid, self.patience = vm, int(appid), patience_s
+        self.first_seen = {}       # (id, task, details) -> when it was first seen waiting
+        self.answered = set()
+        self.api_failures = 0
+        self.last = None
+        self.log = Path(vm.state().get("log") or "") if _bottle(vm) else None
+        self.log_pos = self.log.stat().st_size if self.log and self.log.is_file() else 0
+
+    def _record(self, line):
+        with open(_run_dir(self.vm) / "game-actions.txt", "a") as f:
+            f.write(f"{time.strftime('%Y-%m-%dT%H:%M:%S')} {line}\n")
+
+    def _waiting_in_log(self):
+        """(task, details) of the newest "waiting for user response" line since the launch."""
+        if not self.log or not self.log.is_file():
+            return None
+        with open(self.log, "rb") as f:
+            f.seek(self.log_pos)
+            text = f.read().decode("utf-8", "replace")
+        hits = [m for m in _WAITING_LOG.finditer(text) if int(m[1]) == self.appid]
+        return (hits[-1][4], hits[-1][5]) if hits else None
+
+    def check(self):
+        """None while all is well, else a description of the request nobody answers."""
+        try:
+            acts = self.last = game_actions(self.vm, self.appid)
+            self.api_failures = 0
+        except Fail as e:
+            self.last = None
+            self.api_failures += 1
+            if self.api_failures >= 2:
+                w = self._waiting_in_log()
+                if w and w not in {(k[1], k[2]) for k in self.answered}:
+                    return (f"Steam is waiting for an answer to {w[0]} \"{w[1]}\" (from the Wine log; "
+                            f"the client's DevTools did not answer: {e})")
+            return None
+        now = time.time()
+        for a in acts:
+            if not a["waiting"]:
+                continue
+            key = (a["id"], a["task"], a["details"])
+            answer = STANDING_ANSWERS.get((a["task"], a["details"]))
+            if answer and key not in self.answered:
+                evaluate(self.vm, f"SteamClient.Apps.ContinueGameAction({int(a['id'])}, {json.dumps(answer)})",
+                         await_promise=False)
+                self.answered.add(key)
+                self._record(f"app {self.appid} action {a['id']}: {a['task']} \"{a['details']}\" -> "
+                             f"ContinueGameAction {answer}")
+                log(f"Steam asked {a['task']} \"{a['details']}\"; answered {answer} (the triage account's "
+                    "standing answer: launch anyway)")
+                if _close_cloud_dialog(self.vm):
+                    log("closed the client's leftover dialog")
+                continue
+            t0 = self.first_seen.setdefault(key, now)
+            if now - t0 >= self.patience and key not in self.answered:
+                evaluate(self.vm, f"SteamClient.Apps.CancelGameAction({int(a['id'])})", await_promise=False)
+                self._record(f"app {self.appid} action {a['id']}: {a['task']} \"{a['details']}\" "
+                             f"waited {int(now - t0)}s -> CancelGameAction")
+                return (f"Steam's launch ({a['action']}, action {a['id']}) is waiting for an answer to "
+                        f"{a['task']} \"{a['details']}\", which has no standing answer; the launch was "
+                        "cancelled")
+        return None
+
+    def status(self):
+        acts = self.last
+        if acts is None:
+            return "client not answering"
+        if not acts:
+            return "no launch action in the client"
+        return "; ".join(f"{a['task'] or a['action']}{' ' + repr(a['details']) if a['details'] else ''}"
+                         f"{' (waiting for an answer)' if a['waiting'] else ''}" for a in acts)
+
+
 def run_game(vm, appid, wait_s=900, launch_args=""):
     """Accept the game's EULAs (the triage account's standing decision), start
     it through the client, and wait for a process from its install directory.
     First starts run the game's redistributable installers first, which can
-    take minutes."""
+    take minutes.  The launch's game action is watched meanwhile: a request
+    with a standing answer is answered, any other one that waits for the user
+    fails the launch within ~15 s instead of waiting out wait_s."""
     st = app_status(vm, appid)
     if not st["installed"]:
         die(f"{appid} is not installed ({st['install_state']})")
@@ -653,14 +782,25 @@ def run_game(vm, appid, wait_s=900, launch_args=""):
             for e in eulas:
                 f.write(f"{time.strftime('%Y-%m-%dT%H:%M:%S')} app {appid} {e['id']} v{e['version']} {e['url']}\n")
         log(f"accepted {len(eulas)} EULA(s) for {appid} (recorded in {rd / 'eulas-accepted.txt'})")
+    watch = _LaunchWatch(vm, appid)
     evaluate(vm, f"SteamClient.Apps.RunGame({json.dumps(str(int(appid)))}, {json.dumps(launch_args)}, -1, 100)",
              await_promise=False)
     log(f"started {appid} ({st['name']}); waiting for its process (first start runs installers)")
+    stuck = []
 
     def up():
         p = _game_processes(vm, st["install_dir"])
-        return bool(p), ", ".join(p) if p else "no game process yet"
-    o, obs = until(up, wait_s, "game process", every=60, vm=vm, interval=10)
+        if p:
+            return True, ", ".join(p)
+        why = watch.check()
+        if why:
+            stuck.append(why)
+            return True, why
+        return False, f"no game process yet; Steam: {watch.status()}"
+    o, obs = until(up, wait_s, "game process", every=30, vm=vm, interval=5)
+    if stuck:
+        die(f"{appid} did not start: {stuck[0]}. Look at the client's windows (`steam targets`, "
+            "`steam js 'document.body.innerText' --target '<title>'`) and the run dir's game-actions.txt")
     if o != Outcome.DONE:
         die(f"{appid} did not start ({o}: {obs}); look at the client's windows: "
             "`steam targets`, then `steam js 'document.body.innerText' --target '<title>'`")

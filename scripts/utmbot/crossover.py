@@ -28,6 +28,12 @@ What this relies on, each checked against CrossOver 26.3:
 * Steam in a bottle is the same client as in the VM.  Wine's networking is
   the Mac's, so its DevTools endpoint is the Mac's 127.0.0.1:8080, and
   steam.py drives it with a Bottle in place of a VM.
+* Input (`cx input`, swift/wininput.swift) reaches a Wine window only while
+  its app is frontmost, which the Accessibility API can make it from the
+  background.  Keys go to the game's process; mouse buttons only count when
+  posted at the HID level, so they are sent only while the screen is
+  unlocked and the game is still in front.  A frontmost full-screen Wine
+  window sits above window level 0, so windows are listed at every level.
 
 The bottle Steam was set up in (signed in) is the *base*.  It is a seed that
 nothing runs in.  Games go into per-game clones named steam-app-<appid>,
@@ -658,16 +664,18 @@ def proof(bottle, install_dir=None, image=None):
 # ---- windows and captures ---------------------------------------------------------
 
 def windows(bottle):
+    """On-screen windows of the bottle's processes, at every window level: a
+    frontmost full-screen Wine window sits above level 0 (26 seen)."""
     from . import capture
     pids = set(bottle.pids())
-    rc, out = run([capture.tool("winlist"), "*"], timeout=30)
+    rc, out = run([capture.tool("wininput"), "windows"], timeout=30)
     wins = []
     for line in out.splitlines():
         r = line.split("\t")
-        if len(r) >= 5 and r[4].strip().isdigit() and int(r[4]) in pids:
+        if len(r) >= 7 and r[4].strip().isdigit() and int(r[4]) in pids:
             x, y, w, h = (int(v) for v in r[1].split(","))
             wins.append({"id": r[0], "x": x, "y": y, "w": w, "h": h, "owner": r[2], "title": r[3],
-                         "pid": int(r[4])})
+                         "pid": int(r[4]), "layer": int(r[5]), "scale": float(r[6])})
     return wins
 
 
@@ -700,6 +708,123 @@ def frames(bottle, secs, fps=120, save_every=0.0):
     w = game_window(bottle)
     out = bottle.run_dir() / f"frames-{time.strftime('%H%M%S')}"
     return capture.frames_window(w["id"], secs, out, fps, save_every)
+
+
+# ---- input ----------------------------------------------------------------------------
+
+# macOS virtual key codes by the names `utmbot input` (the VM's) uses, plus
+# the arrow and navigation keys
+MAC_KEYS = {"esc": 53, "escape": 53, "backspace": 51, "tab": 48, "enter": 36, "return": 36,
+            "ctrl": 59, "lshift": 56, "shift": 56, "rshift": 60, "alt": 58, "space": 49,
+            "capslock": 57, "minus": 27, "equals": 24, "comma": 43, "period": 47, "slash": 44,
+            "semicolon": 41, "quote": 39, "backquote": 50, "lbracket": 33, "rbracket": 30,
+            "backslash": 42, "up": 126, "down": 125, "left": 123, "right": 124, "home": 115,
+            "end": 119, "pageup": 116, "pagedown": 121, "delete": 117, "insert": 114,
+            "kpenter": 76}
+MAC_KEYS.update(zip("asdfhgzxcv", range(10)))
+MAC_KEYS.update(zip("bqweryt", range(11, 18)))
+MAC_KEYS.update({"1": 18, "2": 19, "3": 20, "4": 21, "6": 22, "5": 23, "9": 25, "7": 26, "8": 28,
+                 "0": 29, "o": 31, "u": 32, "i": 34, "p": 35, "l": 37, "j": 38, "k": 40, "n": 45,
+                 "m": 46})
+MAC_KEYS.update({f"f{i + 1}": c for i, c in enumerate((122, 120, 99, 118, 96, 97, 98, 100, 101, 109,
+                                                        103, 111))})
+
+INPUT_USAGE = """utmbot cx input <command> --bottle B     keyboard and mouse to the game's window
+
+  key KEY [--hold S] [--times N] [--gap S]
+  combo KEY+KEY[+KEY] [--hold S]          e.g. alt+enter, shift+w
+  text TEXT                               US-layout ASCII, key by key
+  click X Y [--button left|right|middle] [--hold S]
+  move X Y                                hover (menus that highlight under the cursor)
+
+X Y are pixels of the `cx shot` image of the window (its top-left is 0 0).
+KEY is a name (esc, enter, space, tab, backspace, up, down, left, right, home,
+end, pageup, pagedown, delete, w, a, s, d, f1-f12, shift, ctrl, alt, 0-9, a-z)
+or vk:N, a macOS virtual key code in decimal.  The game's app is brought to
+the front first: input needs the screen unlocked and the Accessibility
+permission for the app utmbot runs under.
+"""
+
+
+def mac_key(name):
+    k = name.lower()
+    if k in MAC_KEYS:
+        return MAC_KEYS[k]
+    if k.startswith("vk:") and k[3:].isdigit() and int(k[3:]) < 128:
+        return int(k[3:])
+    die(f"unknown key {name!r}: use a name ({', '.join(sorted(MAC_KEYS)[:14])}, …) or vk:N for a "
+        "macOS virtual key code")
+
+
+def need_accessibility():
+    """Stop with what to do; ask macOS once so the app shows up in the list."""
+    from . import capture
+    run([capture.tool("wininput"), "trusted", "--prompt"], timeout=30)
+    agent = os.environ.get("GAMESDB_MODE") == "auto"
+    who = ("\"UTM Bot Agent\" (the launcher the dispatched sessions run under; `utmbot` asked "
+           "macOS for it at db-setup: re-run the setup with --permissions)") if agent else \
+        "the terminal app this runs in"
+    die("posting input needs the Accessibility permission, and this process does not have it: "
+        f"turn it on for {who} in System Settings > Privacy & Security > Accessibility. Until "
+        "then a game's menus cannot be driven in a bottle")
+
+
+def _wininput(bottle, *cmd):
+    from . import capture
+    exe = capture.tool("wininput")
+    rc, out = run([exe, "trusted"], timeout=30)
+    if rc != 0:
+        need_accessibility()
+    rc, out = run([exe, "locked"], timeout=30)
+    if rc == 0:
+        die("the screen is locked: input to a window does not reach it, and clicks could reach "
+            "the lock screen. Nothing was sent")
+    rc, out = run([exe, *map(str, cmd)], timeout=120)
+    if rc != 0:
+        die(f"input to '{bottle.name}' failed: {out.strip()}")
+
+
+def send_input(bottle, rest):
+    import argparse
+    sub = rest[0] if rest else ""
+    if sub not in ("key", "combo", "text", "click", "move"):
+        print(INPUT_USAGE)
+        return 2
+    p = argparse.ArgumentParser(prog=f"utmbot cx input {sub}")
+    if sub == "key":
+        p.add_argument("key")
+        p.add_argument("--hold", type=float, default=0.15)
+        p.add_argument("--times", type=int, default=1)
+        p.add_argument("--gap", type=float, default=0.3)
+    elif sub == "combo":
+        p.add_argument("keys")
+        p.add_argument("--hold", type=float, default=0.15)
+    elif sub == "text":
+        p.add_argument("text")
+    else:
+        p.add_argument("x", type=int)
+        p.add_argument("y", type=int)
+        if sub == "click":
+            p.add_argument("--button", default="left", choices=["left", "right", "middle"])
+            p.add_argument("--hold", type=float, default=0.1)
+    a = p.parse_args(rest[1:])
+    w = game_window(bottle)
+    pid = w["pid"]
+    if sub == "key":
+        for i in range(a.times):
+            _wininput(bottle, "key", pid, mac_key(a.key), a.hold)
+            if i + 1 < a.times:
+                time.sleep(a.gap)
+    elif sub == "combo":
+        _wininput(bottle, "key", pid, ",".join(str(mac_key(k)) for k in a.keys.split("+")), a.hold)
+    elif sub == "text":
+        _wininput(bottle, "text", pid, a.text)
+    elif sub == "click":
+        _wininput(bottle, "click", pid, w["id"], a.x, a.y, a.button, a.hold)
+    else:
+        _wininput(bottle, "move", pid, w["id"], a.x, a.y)
+    print(f"INPUT {sub} {' '.join(rest[1:])}")
+    return 0
 
 
 # ---- logs --------------------------------------------------------------------------
@@ -1153,8 +1278,14 @@ USAGE = """utmbot cx <command>          CrossOver on this Mac (skills/crossover-
   import APPID --bottle B [--vm NAME]
                               copy the game the running Steam VM has installed into the
                               bottle (same build, no download); bottle stopped
-  windows --bottle B          on-screen windows of the bottle's processes
+  windows --bottle B          on-screen windows of the bottle's processes (every level)
   shot --bottle B [PATH]      the game's window (Screen Recording permission)
+  input --bottle B key KEY [--hold S] [--times N] | combo KEY+KEY | text TEXT |
+          click X Y [--button B] | move X Y
+                              keyboard and mouse to the game's window, like the VM's
+                              `utmbot input` plus arrow keys; X Y are pixels of the
+                              `cx shot` image. Brings the game to the front; needs
+                              Accessibility and an unlocked screen (`cx input` alone: help)
   frames SECS --bottle B [--fps N] [--save-every S]
                               distinct fps, holds, black and tinted frames of its window
   logs --bottle B             gather Steam logs and dumps, backend logs, crash reports
@@ -1310,7 +1441,7 @@ def main(rest):
         p.add_argument("secs", type=float)
         p.add_argument("--fps", type=int, default=120)
         p.add_argument("--save-every", type=float, default=0.0)
-    if sub == "steam":
+    if sub in ("steam", "input"):
         a, steam_args = p.parse_known_args(args)
     elif sub == "exec":
         a, exe_args = p.parse_known_args(args)
@@ -1341,12 +1472,15 @@ def main(rest):
         if steam_args[:1] == ["start"]:
             gpu_guard(b, f"cx steam start {b.name}")
         return steam.main(b, steam_args)
+    elif sub == "input":
+        return send_input(b, steam_args)
     elif sub == "import":
         import_from_vm(b, a.appid, a.vm)
     elif sub == "windows":
         for w in windows(b):
             print(f"{w['id']:>8s} pid {w['pid']:<7d} {w['w']}x{w['h']}+{w['x']}+{w['y']} "
-                  f"{w['owner']}: {w['title']}")
+                  f"(shot {int(w['w'] * w['scale'])}x{int(w['h'] * w['scale'])} px"
+                  f"{', level ' + str(w['layer']) if w['layer'] else ''}) {w['owner']}: {w['title']}")
     elif sub == "shot":
         shot(b, a.path)
     elif sub == "frames":

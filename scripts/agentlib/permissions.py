@@ -13,9 +13,13 @@ LaunchAgent under that launcher, exactly as a session would make them:
                   has no prompt for it: the user adds the launcher to Full
                   Disk Access (setup opens the pane and shows the app)
   screen          Screen Recording (window screenshots, frame capture)
+  accessibility   post keyboard and mouse events (`utmbot cx input` drives a
+                  game in a CrossOver bottle). Its dialog only points to
+                  System Settings, so setup opens the Accessibility pane,
+                  shows the launcher in Finder, and waits
 
 `request_all()` runs it and prints what is granted. The job itself is
-`python3 permissions.py run OUT UTM_APP AEPERM SCREENACCESS LAUNCHER_APP`.
+`python3 permissions.py run OUT UTM_APP AEPERM SCREENACCESS LAUNCHER_APP WININPUT`.
 """
 
 import json
@@ -135,7 +139,25 @@ def _screen(screenaccess):
     return "granted" if "granted" in out else "asked (takes effect when the agents restart)"
 
 
-def job(out, app, aeperm, screenaccess, launcher):
+def _accessibility(wininput, launcher, deadline):
+    """Accessibility: macOS's prompt (AXIsProcessTrustedWithOptions) only
+    lists the app and points to System Settings. Open the pane, show the
+    launcher in Finder, and wait for the switch."""
+    def trusted():
+        return _out([wininput, "trusted"], 30)[0] == 0
+    if trusted():
+        return "granted"
+    _out([wininput, "trusted", "--prompt"], 30)
+    _out(["open", "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Accessibility"], 30)
+    _out(["open", "-R", launcher], 30)
+    while time.time() < deadline:
+        time.sleep(3)
+        if trusted():
+            return "granted"
+    return "denied"
+
+
+def job(out, app, aeperm, screenaccess, launcher, wininput):
     deadline = time.time() + WAIT
     res = {}
 
@@ -147,6 +169,7 @@ def job(out, app, aeperm, screenaccess, launcher):
     put("automation", _automation(app, aeperm, deadline))
     put("app data", _app_data(app, launcher, deadline + 120))
     put("screen", _screen(screenaccess))
+    put("accessibility", _accessibility(wininput, launcher, time.time() + WAIT))
     put("done", True)
 
 
@@ -158,6 +181,8 @@ HOW = {
     "app data": "System Settings > Privacy & Security > Full Disk Access: add UTM Bot Agent "
                 "(~/.utmapp-bot/agents/UTM Bot Agent.app; again after the launcher is rebuilt)",
     "screen": "System Settings > Privacy & Security > Screen & System Audio Recording: UTM Bot Agent",
+    "accessibility": "System Settings > Privacy & Security > Accessibility: add UTM Bot Agent "
+                     "(~/.utmapp-bot/agents/UTM Bot Agent.app) and switch it on",
 }
 
 
@@ -166,7 +191,7 @@ def request_all(launcher, python, plugin, utm_app, data, say, warn):
     sys.path.insert(0, str(Path(plugin) / "scripts"))
     os.environ.setdefault("UTMAPP_BOT_DATA", str(data))
     from utmbot.capture import tool  # builds the Swift helpers into DATA/bin
-    aeperm, screenaccess = tool("aeperm"), tool("screenaccess")
+    aeperm, screenaccess, wininput = tool("aeperm"), tool("screenaccess"), tool("wininput")
     label = "app.getutm.utmapp-bot.permissions"
     out = Path(data) / "agents" / "permissions.json"
     out.unlink(missing_ok=True)
@@ -175,7 +200,7 @@ def request_all(launcher, python, plugin, utm_app, data, say, warn):
         "Label": label, "RunAtLoad": True, "KeepAlive": False, "ProcessType": "Interactive",
         "ProgramArguments": [str(launcher), str(python), str(Path(__file__).resolve()), "run",
                              str(out), str(utm_app), aeperm, screenaccess,
-                             str(Path(launcher).parents[2])]}))
+                             str(Path(launcher).parents[2]), wininput]}))
     uid = os.getuid()
     subprocess.run(["launchctl", "bootout", f"gui/{uid}/{label}"], capture_output=True)
     r = subprocess.run(["launchctl", "bootstrap", f"gui/{uid}", str(plist)], capture_output=True, text=True)
@@ -186,10 +211,12 @@ def request_all(launcher, python, plugin, utm_app, data, say, warn):
     say("asking macOS for the agents' permissions: click Allow on each \"UTM Bot Agent\" dialog "
         f"(Local Network, controlling UTM, Screen Recording); waiting up to {WAIT // 60} min. "
         "If System Settings opens at Full Disk Access with UTM Bot Agent shown in Finder, drag it "
-        "into the list and switch it on (UTM's settings; macOS has no dialog for that one)")
+        "into the list and switch it on (UTM's settings; macOS has no dialog for that one). Then "
+        "it opens Accessibility the same way: add UTM Bot Agent there too and switch it on "
+        "(keyboard and mouse input to CrossOver games)")
     res, shown = {}, set()
     try:
-        end = time.time() + WAIT + 300
+        end = time.time() + 2 * WAIT + 300
         while time.time() < end:
             try:
                 res = json.loads(out.read_text())
@@ -212,7 +239,7 @@ def request_all(launcher, python, plugin, utm_app, data, say, warn):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) == 7 and sys.argv[1] == "run":
+    if len(sys.argv) == 8 and sys.argv[1] == "run":
         job(*sys.argv[2:])
     else:
         sys.exit(__doc__)

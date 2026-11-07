@@ -160,14 +160,43 @@ $UB cx run <appid> --bottle steam-app-<appid> --backend <d3dmetal|dxmt> --wait 9
 #   RUNNING <pid> <game>.exe, then BACKEND …; exit 2: no comparison (see the rules)
 $UB cx windows --bottle steam-app-<appid>    # the game's window, Steam's apart
 $UB cx shot --bottle steam-app-<appid>
+$UB cx input --bottle steam-app-<appid> click X Y   # X Y: pixels of the cx shot image
 $UB cx frames 30 --bottle steam-app-<appid>  # same analysis as the VM's `frames`
 $UB cx proof --bottle steam-app-<appid>      # again, once the game draws
 $UB cx stop --bottle steam-app-<appid>       # logs gathered, lease returned
 ```
 
-- Input to the game: the bottle's window is a normal Mac window. Bring it to
-  the front and drive it the way the game's workspace notes say
-  (`$UB game show <appid>`). Look at a screenshot before each step.
+- **Steam's questions at launch.** `cx run` (and `steam run` in the VM)
+  watch the client's launch while they wait, and log what it is doing
+  every 30 s. Steam's "Cloud Out of Date" question (the same account played
+  on the Steam VM, and that save is not uploaded yet) gets the triage
+  account's standing answer, "Play anyway", through the client's own API.
+  `game-actions.txt` in the run directory records it. Any other question
+  that waits for a person cancels the launch within ~15 s, and the error
+  names the task and the question. Read the client's window (`cx steam
+  --bottle B targets`, then `js 'document.body.innerText' --target Steam`)
+  and decide.
+- **Input to the game:** `cx input` is the VM's `utmbot input` for a
+  bottle, plus arrow and navigation keys:
+  ```sh
+  $UB cx input --bottle B click X Y [--button right]  # X Y: pixels of the `cx shot` image
+  $UB cx input --bottle B key enter [--hold 0.3] [--times N]   # esc, up, down, w, f1, vk:N ...
+  $UB cx input --bottle B combo alt+enter
+  $UB cx input --bottle B text "name"                 # US-layout ASCII
+  $UB cx input --bottle B move X Y                    # hover
+  ```
+  It brings the game to the front first, so the game takes over the Mac's
+  screen. Drive the game the way its workspace notes say (`$UB game show
+  <appid>`), and look at a `cx shot` before each step: menus slide in, and
+  a click before they settle hits the wrong item. Some games ignore arrow
+  keys in menus (Forspoken uses W/S). Use the game's own keys, or click.
+- `cx input` needs the Accessibility permission for the app utmbot runs
+  under (the terminal; "UTM Bot Agent" for dispatched sessions) and an
+  unlocked screen. Without either it stops, says which, and sends nothing.
+  Interactive: ask the user to switch it on in System Settings > Privacy &
+  Security > Accessibility. Auto: collect what needs no input (the title
+  screen, `cx proof`, `cx frames`), and say in the summary that the menus
+  could not be reached, and why.
 - `--env K=V` passes extra environment (repeatable). `--verbose` raises the
   backend's own log level (DXMT's) into
   `backend-logs/`. `--hud` turns on the Metal HUD, which changes what

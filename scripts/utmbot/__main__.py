@@ -83,7 +83,7 @@ Input (to the running VM; keys are held so games that poll per frame see them):
 CrossOver on this Mac (the same game in Wine on the host, for A/B; no --vm needed):
   cx info | list | base | clone APPID | delete NAME | cleanup | backend BOTTLE [X]
      | start/run/verify/exec/stop --bottle B [--backend d3dmetal|dxmt]
-     | proof | steam … | import APPID | windows | shot | frames SECS | logs | ps
+     | proof | steam … | import APPID | windows | shot | input … | frames SECS | logs | ps
                           `utmbot cx help` for the details; bottles share the GPU with
                           the VMs, so running anything in one takes the UTM lease
 
