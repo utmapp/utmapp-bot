@@ -22,11 +22,16 @@ Patterns are deliberately greedy: a redacted version number costs little, a
 leaked home folder name does not.  Review the output anyway.
 """
 
+import functools
 import ipaddress
+import json
 import re
 import os
 import shlex
+import subprocess
+import time
 import urllib.parse
+from pathlib import Path
 
 # (class, regex, group to replace or 0).  Order matters: paths first, so the
 # user name inside them becomes [USER] rather than being half-matched later.
@@ -65,6 +70,9 @@ PATTERNS = [
     ("SECRET", re.compile(r"(?i)\b(?:token|secret|password|passwd|api[_-]?key|auth)[\"']?\s*[:=]\s*[\"']?([^\s\"',;]{6,})"), 1),
     ("SECRET", re.compile(r"\beyJ[\w-]{10,}\.[\w-]{10,}\.[\w-]{10,}\b"), 0),
     ("KEY", re.compile(r"\b[A-Z0-9]{5}-[A-Z0-9]{5}-[A-Z0-9]{5}(?:-[A-Z0-9]{5}){1,2}\b"), 0),
+    # license and product keys of any shape: four or more dash-separated
+    # upper-case groups mixing letters and digits (3DMark's 3DM-…, CD keys)
+    ("KEY", re.compile(r"\b(?=[A-Z0-9-]{19,})(?=[A-Z0-9-]*\d)(?=[A-Z0-9-]*[A-Z])[A-Z0-9]{2,8}(?:-[A-Z0-9]{4,8}){3,}\b"), 0),
 ]
 IPV4 = re.compile(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])")
 # candidates only; ipaddress decides (handles :: compression, rejects times and MACs)
@@ -320,6 +328,149 @@ def link_ok(url, extra=()):
     return any(host == d or host.endswith("." + d) for d in LINK_DOMAINS | extra)
 
 
+# names that are public by design: the GitHub organization, the bot account and the plugin
+# (the Steam triage account shares the name); more in GAMESDB_PUBLIC_NAMES
+PUBLIC_NAMES = {"utmapp", "utmapp-bot", *(n.strip().casefold() for n in
+                                os.environ.get("GAMESDB_PUBLIC_NAMES", "").split(",") if n.strip())}
+GENERIC_ACCOUNTS = {"user", "admin", "administrator", "test", "guest", "mac", "utm", "root", "steam"}
+
+
+@functools.lru_cache(maxsize=1)
+def host_identifiers():
+    """What identifies this Mac and must not appear in a public comment: its
+    names, the user's account, its serial, hardware UUID, provisioning UDID,
+    ECID and MAC addresses, its licenses (3DMark, CrossOver)
+    and the Steam triage account, its IP addresses, the games-db
+    server's host, where it is (Wi-Fi network, time zone and its city), and
+    its displays' native sizes (a game rendering at "3456x2234" tells which
+    Mac model triaged it). Email addresses and other addresses are refused by
+    the generic lint already."""
+    found = {}
+
+    def run(cmd):
+        try:
+            return subprocess.run(cmd, capture_output=True, text=True, timeout=30).stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            return ""
+    for key in ("ComputerName", "LocalHostName", "HostName"):
+        v = run(["scutil", "--get", key])
+        if len(v) >= 4:
+            found[v] = f"this Mac's {key}"
+    user = os.environ.get("USER") or ""
+    if len(user) >= 4 and user.lower() not in GENERIC_ACCOUNTS:
+        found[user] = "this Mac's user name"
+    # hardware identity: serial, hardware UUID, provisioning UDID and the chip's
+    # ECID (the UDID's second half on Apple silicon), and every MAC address
+    try:
+        hw = (json.loads(run(["system_profiler", "SPHardwareDataType", "-json"]) or "{}")
+              .get("SPHardwareDataType") or [{}])[0]
+    except ValueError:
+        hw = {}
+    for key, what in (("serial_number", "serial number"), ("platform_UUID", "hardware UUID"),
+                      ("provisioning_UDID", "provisioning UDID")):
+        v = str(hw.get(key) or "")
+        if len(v) >= 8:
+            found[v] = f"this Mac's {what}"
+    udid = str(hw.get("provisioning_UDID") or "")
+    if re.fullmatch(r"[0-9A-Fa-f]{8}-[0-9A-Fa-f]{16}", udid):
+        ecid = udid.split("-")[1].lstrip("0") or "0"
+        found[ecid] = "this Mac's ECID"
+        found[str(int(ecid, 16))] = "this Mac's ECID"
+    m = re.search(r'"IOPlatformSerialNumber" = "([^"]+)"', run(["ioreg", "-rd1", "-c", "IOPlatformExpertDevice"]))
+    if m:
+        found[m[1]] = "this Mac's serial number"
+    for mac in set(re.findall(r"\bether\s+([0-9a-f]{2}(?::[0-9a-f]{2}){5})", run(["ifconfig"]))):
+        if mac != "00:00:00:00:00:00":
+            found[mac] = "this Mac's MAC address"
+    try:
+        disp = json.loads(run(["system_profiler", "SPDisplaysDataType", "-json"]) or "{}")
+    except ValueError:
+        disp = {}
+    # its addresses (the generic lint flags every address; these say so plainly)
+    for m in re.finditer(r"\binet6?\s+([0-9a-fA-F:.]+)", run(["ifconfig"])):
+        try:
+            ip = ipaddress.ip_address(m[1].split("%")[0])
+        except ValueError:
+            continue
+        if not (ip.is_loopback or ip.is_link_local):
+            found[str(ip)] = "this Mac's IP address"
+    # the games database server it triages for
+    env = Path(os.environ.get("UTMAPP_BOT_DATA", "~/.utmapp-bot")).expanduser() / "gamesdb.env"
+    try:
+        m = re.search(r"(?m)^\s*(?:export\s+)?GAMESDB_SSH=[\"']?(?:[^@\s\"']*@)?([^:\s\"']+)", env.read_text())
+        if m and len(m[1]) >= 4:
+            found[m[1]] = "the games database server's host"
+    except OSError:
+        pass
+    # where it is: the Wi-Fi network, the time zone and its city
+    for line in run(["networksetup", "-listallhardwareports"]).split("Hardware Port:"):
+        if "Wi-Fi" in line:
+            dev = re.search(r"Device:\s*(\S+)", line)
+            ssid = run(["networksetup", "-getairportnetwork", dev[1]]) if dev else ""
+            m = re.search(r"Current Wi-Fi Network:\s*(.+)", ssid)
+            if m and len(m[1].strip()) >= 3:
+                found[m[1].strip()] = "this Mac's Wi-Fi network"
+    try:
+        tz = os.path.realpath("/etc/localtime").split("zoneinfo/", 1)[1]
+    except IndexError:
+        tz = ""
+    if "/" in tz:
+        found[tz] = "this Mac's time zone"
+        city = tz.rsplit("/", 1)[1].replace("_", " ")
+        # a city only from a real Area/City zone: "US/Pacific" names a region,
+        # and "Pacific" alone would refuse a comment about "Pacific Drive"
+        if len(city) >= 4 and tz.split("/", 1)[0] in ("Africa", "America", "Antarctica", "Asia",
+                                                       "Atlantic", "Australia", "Europe", "Indian"):
+            found[city] = "this Mac's time zone city"
+    for abbr in set(time.tzname):
+        if abbr and abbr.isalpha() and abbr not in ("UTC", "GMT"):
+            found[abbr] = "this Mac's time zone"
+    # licenses and accounts of the software the bot runs: the 3DMark key, the
+    # CrossOver registration, the Steam triage account (its sign-in name and
+    # profile name, from the bottles' and the VM data's loginusers.vdf)
+    data = Path(os.environ.get("UTMAPP_BOT_DATA", "~/.utmapp-bot")).expanduser()
+    try:
+        k = (data / "3dmark.key").read_text().strip()
+        if len(k) >= 8:
+            found[k] = "the 3DMark license key"
+    except OSError:
+        pass
+    try:
+        lic = (Path.home() / "Library/Preferences/com.codeweavers.CrossOver.license").read_text(errors="replace")
+        for m in re.finditer(r"(?m)^\s*(id|customer|email|key|serial)\s*=\s*(.+?)\s*$", lic):
+            if len(m[2]) >= 4:
+                found[m[2]] = f"the CrossOver license ({m[1]})"
+    except OSError:
+        pass
+    vdfs = list((Path.home() / "Library/Application Support/CrossOver/Bottles").glob(
+        "*/drive_c/Program Files*/Steam/config/loginusers.vdf")) + list(data.glob("**/loginusers.vdf"))
+    for f in vdfs[:20]:
+        try:
+            for m in re.finditer(r'"(AccountName|PersonaName)"\s+"([^"]{3,})"', f.read_text(errors="replace")):
+                found[m[2]] = f"the Steam triage account ({m[1]})"
+        except OSError:
+            pass
+    for v in [v for v in found if v.casefold() in PUBLIC_NAMES]:
+        del found[v]  # the bot's public name (its GitHub account is in every fix-branch link)
+    for gpu in disp.get("SPDisplaysDataType", []):
+        for d in gpu.get("spdisplays_ndrvs", []):
+            for k in ("_spdisplays_pixels", "spdisplays_pixelresolution", "_spdisplays_resolution"):
+                for w, h in re.findall(r"(\d{3,5})\s*x\s*(\d{3,5})", str(d.get(k, ""))):
+                    found[f"{w}x{h}"] = "this Mac's display size"
+    return found
+
+
+def host_problems(body):
+    """Matches of host_identifiers() in a comment (sizes also as 3456 x 2234)."""
+    hits = []
+    for value, what in host_identifiers().items():
+        m = re.fullmatch(r"(\d+)x(\d+)", value)
+        pat = rf"(?<!\d){m[1]}\s*[x×*]\s*{m[2]}(?!\d)" if m else rf"(?i)(?<![\w.-]){re.escape(value)}(?![\w-])"
+        if re.search(pat, body):
+            hits.append(f"{value} ({what})")
+    return hits
+
+
 def comment_problems(body, names=(), allow=(), allow_link=(), private_source=False):
     """Why this comment must not be posted, or None."""
     if not body:
@@ -340,6 +491,11 @@ def comment_problems(body, names=(), allow=(), allow_link=(), private_source=Fal
             return ("the comment shows where its data came from (private attachments):\n" +
                     lint_report(tells) + "\nWrite findings as observations with their configuration, "
                     "without placeholders, file references or the reporter's clock.")
+    host = host_problems(body)
+    if host:
+        return ("the comment identifies this Mac: " + ", ".join(host) + ". Say \"the Mac's native "
+                "display size\" (or leave it out) instead of the number; never name the Mac, its "
+                "network, its addresses or where it is (use UTC for times).")
     # a public comment: nothing that looks personal goes out
     found = lint_text(body, names, allow)
     if found:

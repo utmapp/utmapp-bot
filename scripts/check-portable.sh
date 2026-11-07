@@ -35,6 +35,19 @@ check "workspace-only names" 'nept\.py|/tmp/nept|Neptune-QEMU|run_user_windows'
 gdb_env="${UTMAPP_BOT_DATA:-$HOME/.utmapp-bot}/gamesdb.env"
 gdb_host="$( { [ -f "$gdb_env" ] && sed -n 's/^[[:space:]]*\(export[[:space:]]*\)\{0,1\}GAMESDB_SSH=//p' "$gdb_env"; printf '%s\n' "${GAMESDB_SSH:-}"; } |
              tr -d "\"'" | sed 's/.*@//; s/:.*//' | grep -v '^$' | head -1)"
+# this Mac's licenses and accounts (3DMark key, CrossOver registration, the
+# Steam triage account) and other identifying values must never be committed:
+# the comment lint's list (scripts/gamesdb/redact.py, host_identifiers)
+while IFS= read -r v; do
+    [ -n "$v" ] && check "a license, account or identifier of this Mac" "$(printf '%s' "$v" | sed 's/[.[\*^$/]/\\&/g')"
+done < <(python3 - "$PWD/scripts" <<'PY' 2>/dev/null
+import sys; sys.path.insert(0, sys.argv[1])
+from gamesdb import redact
+for v, what in redact.host_identifiers().items():
+    if any(k in what for k in ("license", "Steam", "serial", "server", "IP address", "Wi-Fi")):
+        print(v)
+PY
+)
 if [ -n "$gdb_host" ]; then
     check "the games database server" "$(printf '%s' "$gdb_host" | sed 's/[.[\*^$]/\\&/g')"
 fi
