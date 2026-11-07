@@ -10,8 +10,10 @@ here are held (--hold) between a press and a release sent apart.
   utmbot input click X Y [--button left|right|middle]
 
 KEY is a name (esc, enter, space, tab, backspace, w, a, s, d, f1, shift,
-ctrl, alt, 0-9, a-z) or sc:N, a PC AT set-1 scan code in decimal.  Arrow keys and
-the other extended (E0-prefixed) keys cannot be sent this way.
+ctrl, alt, 0-9, a-z, up, down, left, right, home, end, pageup, pagedown,
+insert, delete, rctrl, ralt) or sc:N, a PC AT set-1 scan code in decimal, or
+e0:N for an extended (E0-prefixed) one.  UTM's `input scan code` takes
+extended keys as 0xE0nn (since UTM 4.7.2).
 """
 
 import time
@@ -28,6 +30,11 @@ for row, first in (("qwertyuiop", 16), ("asdfghjkl", 30), ("zxcvbnm", 44)):
     KEYS.update({c: first + i for i, c in enumerate(row)})
 KEYS.update({f"f{i}": 58 + i for i in range(1, 11)})
 KEYS.update({"f11": 87, "f12": 88})
+# extended keys: 0xE000 | make code
+KEYS.update({k: 0xE000 | v for k, v in (("up", 0x48), ("down", 0x50), ("left", 0x4B), ("right", 0x4D),
+                                        ("home", 0x47), ("end", 0x4F), ("pageup", 0x49),
+                                        ("pagedown", 0x51), ("insert", 0x52), ("delete", 0x53),
+                                        ("rctrl", 0x1D), ("ralt", 0x38))})
 
 
 def code(key):
@@ -36,8 +43,10 @@ def code(key):
         return KEYS[k]
     if k.startswith("sc:") and k[3:].isdigit() and 0 < int(k[3:]) < 128:
         return int(k[3:])
-    die(f"unknown key {key!r}: use a name ({', '.join(sorted(KEYS)[:12])}, …) or sc:N for a "
-        "decimal scan code")
+    if k.startswith("e0:") and k[3:].isdigit() and 0 < int(k[3:]) < 128:
+        return 0xE000 | int(k[3:])
+    die(f"unknown key {key!r}: use a name ({', '.join(sorted(KEYS)[:12])}, …), sc:N for a "
+        "decimal scan code, or e0:N for an extended one")
 
 
 def press(vm, codes, hold):
