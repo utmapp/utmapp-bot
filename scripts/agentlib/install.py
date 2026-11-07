@@ -169,6 +169,25 @@ def install_launcher():
     return LAUNCHER, "built"
 
 
+def responsible_path(pid):
+    """The program macOS charges pid's privacy-guarded actions to, or None."""
+    import ctypes
+    try:
+        f = ctypes.CDLL(None).responsibility_get_pid_responsible_for_pid
+        f.restype, f.argtypes = ctypes.c_int, [ctypes.c_int]
+        rp = f(int(pid))
+        out = _run(["ps", "-o", "comm=", "-p", str(rp)]).stdout.strip()
+        return out or None
+    except (OSError, AttributeError, ValueError):
+        return None
+
+
+def sessions_outside_launcher(pids):
+    """Running session pids whose permissions are not the launcher's (started
+    before it was installed): they keep the old grants until they restart."""
+    return [p for p in pids if p and (responsible_path(p) or str(LAUNCHER)) != str(LAUNCHER)]
+
+
 def launcher_check():
     """'' when the launcher is installed and signed, else what is wrong."""
     if not LAUNCHER.exists():

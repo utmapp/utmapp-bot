@@ -328,6 +328,21 @@ def check(cfg):
     return ok and healthy and not u
 
 
+def warn_old_sessions():
+    """Sessions started before the launcher keep their old permissions."""
+    from agentlib.install import sessions_outside_launcher
+    try:
+        jobs = json.loads((tunnel.STATE / "dispatch" / "state.json").read_text()).get("jobs", {})
+    except (OSError, ValueError):
+        return
+    running = {j["id"]: j.get("pid") for j in jobs.values() if j.get("status") == "running"}
+    old = set(sessions_outside_launcher(running.values()))
+    for jid, pid in running.items():
+        if pid in old:
+            warn(f"{jid} (pid {pid}) started before the agent launcher: it keeps its old permissions "
+                 "until it stops; let it finish, or stop it and `gamesdb dispatch retry` it")
+
+
 def ask_permissions(cfg):
     """Have macOS ask now, under the launcher, for what sessions will need."""
     from agentlib.install import install_launcher
@@ -454,6 +469,7 @@ def main(argv):
         load_agent("dispatch", plist_for("dispatch", [str(launcher), py, str(lib / "dispatch.py"), "run"],
                                          env, keepalive=True), code_changed or how == "built")
         ask_permissions(cfg)
+        warn_old_sessions()
 
     # ---- first runs
     if not a.skip_checks:
