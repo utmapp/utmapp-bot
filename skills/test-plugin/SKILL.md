@@ -49,10 +49,18 @@ scripts/gamesdb/e2e-scenario.sh status                       # dispatcher, jobs,
 scripts/gamesdb/e2e-local.sh log 60                          # the e2e dispatcher's log
 ```
 
-Sessions drive the UTM the harness would pick (`UTM_APP`, else the last
-`build-utm.sh` build, else `/Applications/UTM.app`); set `UTM_APP` before
-`start` to choose another, and `e2e-local.sh restart` to change it later.
+Sessions drive production's UTM, `/Applications/UTM.app`; set `UTM_APP`
+before `start` to test another (a dev build), and `e2e-local.sh restart` to
+change it later. A dev build may lack what production has (D3DMetal needs
+the x86_64 render server).
 It needs a current UTM (`docs/utm-host.md`).
+
+The e2e dispatcher runs as production's does: a launchd job
+(`app.getutm.utmapp-bot.e2e-dispatch`) under the agent launcher, so macOS
+charges Local Network, UTM's container and Automation to "UTM Bot Agent",
+not to your terminal. Run `db-setup` first (it builds the launcher and asks
+for its permissions). A dispatcher started from a terminal would pass tests
+that fail in production.
 
 `e2e-scenario.sh status` is the one command that shows where every test
 stands. Reports and Auto-Triage comments show on http://127.0.0.1:18080.
@@ -61,6 +69,22 @@ backup into the local database (no secrets are copied) when synthetic ones
 are not enough. Pass `GAMESDB_URL=http://127.0.0.1:18081
 GAMESDB_STATE=~/.utmapp-bot/gamesdb-e2e` to any `bin/gamesdb` command to aim
 it at the local instance.
+
+**The result check.** A triage that finishes records its comment with
+`gamesdb final`; the dispatcher runs `/utmapp-bot:db-triage-check` and posts
+it, or resumes the triage with the findings. To test the check on a real
+finished triage without redoing it: copy the report into the local db
+(`e2e-seed.py report` with its text, its earlier bot comments as
+`author_kind='bot'` rows), fork the triage session (`claude -p "<you are a
+test copy on local report N>" --resume <sid> --fork-session`), run its
+`gamesdb final` in its environment (`GAMESDB_MODE=auto
+GAMESDB_DISPATCH_JOB=triage:N CLAUDE_CODE_SESSION_ID=<fork>`), and give a
+fresh `GAMESDB_STATE` the triage job (status running, a dead pid, a log
+holding the fork's result). The dispatcher then checks it and, on a fail,
+resumes the fork with the findings. Note: `e2e-seed.py` defaults to
+`gamesdb-local/data/`; point `E2E_DB` at the database the local server
+actually serves (`gamesdb-local/test-data/gamesdb.sqlite` when it was
+started with `--data …/test-data`).
 
 ## Two ways to start a test
 
