@@ -18,7 +18,7 @@ from pathlib import Path
 
 from . import procs, remote
 from .common import (DATA, SCRIPTS, UTM_DOMAIN, UTM_SH, Fail, Session, die, ensure_dir, log,
-                     parse_env_file, pid_alive, run, slug)
+                     parse_env_file, pid_alive, read_json, run, slug, write_json)
 from .wait import Outcome, until
 
 DIRECTX = {"default": 0, "disabled": 1, "dxmt": 2, "d3dmetal": 3}
@@ -90,9 +90,28 @@ def automation_check(app):
             "Privacy & Security > Automation")
 
 
+# questions about UTM's state: answered "not running" rather than launching it
+QUERY_VERBS = {"exists", "status", "file", "nic", "net-modes", "query-install"}
+
+
+def selected_running():
+    app = app_path()
+    return any(a and str(Path(a).resolve()) == app for _, a in running_apps())
+
+
 def osa_run(verb, *args, timeout=120):
     """utm.applescript VERB ARGS: (rc, output); rc 124 when osascript did not
-    return within `timeout` (run's own limit, not an AppleEvent timeout)."""
+    return within `timeout` (run's own limit, not an AppleEvent timeout).
+
+    AppleScript launches an app that is not running, which would bypass
+    ensure_app(): the check for another UTM, and the record of what this
+    harness started (the only UTM it may quit later).  So a query to a UTM
+    that is not running answers "not running", and any other verb starts
+    UTM through ensure_app() first."""
+    if not selected_running():
+        if verb in QUERY_VERBS:
+            return 1, f"{app_path()} is not running"
+        ensure_app()
     env = dict(os.environ, UTM_APP=app_path())
     rc, out = run(["osascript", str(SCRIPTS / "provision" / "utm.applescript"), verb,
                    *map(str, args)], timeout=timeout, env=env)
@@ -183,9 +202,8 @@ def ensure_app():
     app = app_path()
     require_automation(app)
     others = [(pid, a) for pid, a in running_apps() if a and str(Path(a).resolve()) != app]
-    if others:
-        die("another UTM is running (" + ", ".join(f"{a} pid {p}" for p, a in others) +
-            f"); quit it first so scripting reaches {app}")
+    for pid, other in others:
+        quit_other(pid, other, app)
     if not any(a for _, a in running_apps()):
         log(f"launching {app}")
         # `open`, never a backgrounded exec: a shell's background-nice setting
@@ -197,14 +215,51 @@ def ensure_app():
             if any(a for _, a in running_apps()):
                 break
             time.sleep(1)
+        mine = [p for p, a in running_apps() if a and str(Path(a).resolve()) == app]
+        if mine:
+            from .lease import me
+            write_json(LAUNCHED, {"pid": mine[0], "app": app, "by": me().get("owner"),
+                                  "time": time.time()})
     automation_check(app)
     for _ in range(30):
         try:
-            osa("exists", "__utmbot_probe__", timeout=20)
-            return app
+            if selected_running():
+                osa("exists", "__utmbot_probe__", timeout=20)
+                return app
         except Fail:
-            time.sleep(2)
+            pass
+        time.sleep(2)
     die(f"{app} does not answer AppleScript")
+
+
+# the UTM this harness launched last: only that one may be quit to make room
+LAUNCHED = DATA / "locks" / "utm-launched.json"
+
+
+def quit_other(pid, other, app):
+    """Another UTM runs (the release app and a dev build share a bundle id,
+    so scripting would reach either). Quit it only when this harness started
+    it, no VM runs in it and no other session holds the UTM lease; a UTM a
+    person or another tool opened (Xcode, a debugger) is never touched."""
+    from . import lease
+    rec = read_json(LAUNCHED) or {}
+    vms = procs.classify()["qemu"]
+    cur = lease.read()
+    other_holder = cur and not lease.stale(cur) and cur.get("owner") != lease.me().get("owner")
+    if rec.get("pid") == pid and not vms and not other_holder:
+        log(f"quitting {other} (pid {pid}): this harness started it ({rec.get('by')}) and it is idle")
+        run(["osascript", "-e", f'tell application "{other}" to quit'], timeout=60)
+        for _ in range(30):
+            if not pid_alive(pid):
+                return
+            time.sleep(1)
+        die(f"{other} (pid {pid}) did not quit")
+    why = ("VMs run in it" if vms else f"the UTM lease is {lease.describe(cur)}" if other_holder
+           else "this harness did not start it: a person or another tool did")
+    die(f"another UTM is running ({other}, pid {pid}) and it is not this harness's to quit: {why}. "
+        f"Never quit it yourself. Wait for it (`utmbot lock acquire --wait …`), or in auto mode "
+        f"report a blocker (`gamesdb session blocked --scope utm`) so a person closes it; scripting "
+        f"must reach {app} alone")
 
 
 def quit_app():
@@ -672,10 +727,13 @@ def vm_status(vm):
     tree = procs.vm_tree(vm.name)
     print(f"vm        {vm.name} ({vm.os}, role {vm.role})")
     print(f"app       {sess.get('app') or app_path()}")
-    try:
-        print(f"utm       {osa('status', vm.name, timeout=20)}")
-    except Fail as e:
-        print(f"utm       ? ({e})")
+    if not selected_running():
+        print("utm       not running (not started for a status query)")
+    else:
+        try:
+            print(f"utm       {osa('status', vm.name, timeout=20)}")
+        except Fail as e:
+            print(f"utm       ? ({e})")
     q = tree["qemu"]
     if q:
         print(f"qemu      pid {q['pid']} cpu {q['cpu']}% rss {q['rss_mb']} MB "
