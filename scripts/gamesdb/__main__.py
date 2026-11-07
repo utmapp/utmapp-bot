@@ -37,6 +37,18 @@ Reports and the triage agent:
                                  once posted; --dry-run only checks (works offline)
   triage-status ID STATUS        pending|in_progress|needs_clarification|fix_proposed|
                                  wont_fix|cannot_reproduce|clear
+                                 (auto mode refuses the finishing ones: use final)
+  final ID --status S (--body TEXT | --file PATH) [comment options]
+                                 a triage's finishing comment and status (needs_clarification,
+                                 fix_proposed, wont_fix, cannot_reproduce). Interactive: posts
+                                 both. Auto mode (a dispatched session): posts nothing; records
+                                 the draft, and the dispatcher posts it once the independent
+                                 result check (db-triage-check) passes, or resumes the session
+                                 with what the check found. --overrule REASON (after a
+                                 send-back): the session disagrees with the check, from its
+                                 evidence; publishes without another check
+  verdict pass|fail [--reasons TEXT|@FILE]
+                                 the result check's verdict (db-triage-check sessions only)
   fix-branch REPO --branch NAME [--ref REF] [--dry-run]
                                  publish a validated fix as a new branch on the bot's GitHub
                                  fork (never a pull request); fix-branch --whoami: the gh
@@ -234,11 +246,61 @@ def cmd_comment(api, a):
     out(res)
 
 
+# the statuses that finish a triage: in auto mode only the result check sets them
+FINISHING = ("needs_clarification", "fix_proposed", "wont_fix", "cannot_reproduce")
+
+
+def dispatched():
+    """The dispatcher's job id when this runs inside a session it started."""
+    return os.environ.get("GAMESDB_DISPATCH_JOB") if os.environ.get("GAMESDB_MODE") == "auto" else None
+
+
 def cmd_triage_status(api, a):
     st = "" if a.status == "clear" else a.status
     if st and st not in TRIAGE:
         die(f"status must be one of {', '.join(TRIAGE)} or clear")
+    if st in FINISHING and dispatched():
+        die(f"not set: in auto mode {st} goes out through `gamesdb final {a.id} --status {st} --file "
+            "comment.md`, which has the result check review it first (db-triage, \"Finishing\")")
     out(api.ok("POST", f"/internal/reports/{a.id}/triage", {"status": st}))
+
+
+def cmd_final(a):
+    if a.status not in FINISHING:
+        die(f"--status must be one of {', '.join(FINISHING)}")
+    body = comment_body(a)
+    job = dispatched()
+    if not job:
+        api = Api()
+        cmd_comment(api, a)
+        out(api.ok("POST", f"/internal/reports/{a.id}/triage", {"status": a.status}))
+        return
+    sid = os.environ.get("CLAUDE_CODE_SESSION_ID")
+    if not sid:
+        die("final in auto mode needs CLAUDE_CODE_SESSION_ID (run it from the dispatched session)")
+    d = tunnel.state_dir() / "dispatch" / "finals"
+    d.mkdir(parents=True, exist_ok=True)
+    os.chmod(d, 0o700)
+    draft = d / f"{a.id}-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}.md"
+    draft.write_text(body + "\n")
+    rec = state.signal(sid, "final", report=a.id, status=a.status, comment=str(draft), job=job,
+                       overrule=(a.overrule or "").strip()[:2000] or None, released=_release_leases())
+    note("recorded, not posted: end your turn now. The dispatcher runs the result check; it posts "
+         "this comment and status when the check passes, or resumes this session with what it found")
+    out(rec)
+
+
+def cmd_verdict(a):
+    sid = os.environ.get("CLAUDE_CODE_SESSION_ID")
+    if not sid or not dispatched():
+        die("verdict is for the result-check session the dispatcher started")
+    reasons = a.reasons or ""
+    if reasons.startswith("@"):
+        reasons = Path(reasons[1:]).read_text()
+    if a.value == "fail" and not reasons.strip():
+        die("--reasons: say what is missing or wrong, as instructions for the triage session")
+    out(state.signal(sid, "verdict", verdict=a.value, reasons=reasons[:12000], job=dispatched()))
+    note("recorded; end your turn now")
 
 
 # ---- moderation ------------------------------------------------------------------------
@@ -530,6 +592,13 @@ def parser():
                    help="notes built from private attachments: refuse anything that shows it")
     s.add_argument("--dry-run", action="store_true", help="only check; works offline")
     s = cmd("triage-status", "id", type=int); s.add_argument("status")
+    s = cmd("final", "id", type=int); s.add_argument("--status", required=True)
+    g = s.add_mutually_exclusive_group(required=True); g.add_argument("--body"); g.add_argument("--file")
+    s.add_argument("--name", action="append"); s.add_argument("--allow", action="append")
+    s.add_argument("--allow-link", action="append"); s.add_argument("--private-source", action="store_true")
+    s.add_argument("--overrule", help="after a send-back: why the check's findings do not apply; "
+                                      "publishes without another check")
+    s = cmd("verdict", "value", choices=["pass", "fail"]); s.add_argument("--reasons")
     s = cmd("fix-branch")
     s.add_argument("repo", nargs="?"); s.add_argument("--branch"); s.add_argument("--ref", default="HEAD")
     s.add_argument("--dry-run", action="store_true"); s.add_argument("--whoami", action="store_true")
@@ -594,6 +663,8 @@ OFFLINE = {
     "tunnel": lambda a: tunnel.status(),
     "fix-branch": fixbranch.main,
     "session": cmd_session,
+    "final": cmd_final,
+    "verdict": cmd_verdict,
     "local": cmd_local,
     "frames": cmd_frames,
     "plist": lambda a: attachments.plist(a.plist, a.out),

@@ -26,6 +26,8 @@ Work and the sessions that do it:
                       -> /utmapp-bot:db-moderate
   gift:<request>      a user offered a Steam gift -> /utmapp-bot:db-steam-accept
   demo:<request>      a user pointed at a free demo -> /utmapp-bot:db-steam-install
+  verify:<report>     a triage recorded its finishing comment (`gamesdb final`)
+                      -> /utmapp-bot:db-triage-check, an independent session
 
 One session that needs UTM runs at a time (triage, gift, demo; the UTM lease
 in scripts/utmbot/lease.py enforces it for every session on the Mac), and one
@@ -40,6 +42,18 @@ and outages (resume after 15 min, growing to 4 h), silence (30 min with no
 log output, no CPU used by the session's commands and no UTM lease touch:
 stop, resume with a nudge), the turn limit, and network loss (the feed is
 retried).
+
+The result check: in auto mode a triage never posts its finishing comment
+and status itself.  `gamesdb final` records the draft and the session ends;
+the job waits ("checking", lease kept) while a fresh verify session reviews
+the draft against the report and the evidence (db-triage-check) and records
+`gamesdb verdict pass|fail`.  Pass: the dispatcher posts the comment and
+sets the status.  Fail: the triage session itself is resumed (same session
+id, its context and prompt cache intact) with the findings.  The triage
+session has the last word: `gamesdb final … --overrule REASON` after a
+send-back publishes unchecked, and after MAX_SENDBACKS send-backs the next
+final is published unchecked, so the two never loop.  A check that reaches
+no verdict publishes the triage's draft.
 
 The one escape hatch is a blocker only a person can clear (a macOS
 permission dialog, an expired Steam sign-in, an expired GitHub token, a
@@ -114,7 +128,11 @@ SILENT_LIMIT = 30 * 60
 HARD_LIMIT = 10 * 3600
 VM_KINDS = {"triage", "clarify", "gift", "demo"}
 LEASED_KINDS = {"triage", "clarify"}
-LIVE = ("running", "waiting", "blocked", "remote")
+LIVE = ("running", "waiting", "blocked", "remote", "checking")
+# the result check sends a triage back at most this many times; the next
+# final is published unchecked (the triage session has the most context, and
+# two sessions must not send a report back and forth forever)
+MAX_SENDBACKS = 3
 # a failed job keeps its lease: the report is this Mac's until a person runs
 # `gamesdb dispatch retry` (released, it would look abandoned and come back
 # as a takeover, here or on another Mac, over and over)
@@ -166,7 +184,9 @@ run it in the background or poll it, and look every 1-5 minutes at its output, a
 log, so a dialog, a prompt or a failure is seen within minutes, not at the end of a long timeout. A \
 session that shows no activity for 30 minutes is stopped and resumed. Never quit, kill or close an \
 app or VM you did not start (another UTM, a debugger, a person's window): wait for the UTM lease, \
-or report a blocker. Finish with a short summary: what you did, what you left for a \
+or report a blocker. A triage finishes through `gamesdb final`, never by setting a finishing \
+status yourself: an independent result check reviews it, and sends it back to this session with \
+reasons when the work is not done. Finish with a short summary: what you did, what you left for a \
 person and why."""
 
 PUSH_ONCE = rc.PUSH_ONCE
@@ -409,7 +429,7 @@ def plan(st, pages, dry_run=False):
         j = jobs.get(jid)
         if j and j.get("version") == version and j["status"] not in ("failed",):
             return  # this exact piece of work is known already
-        if j and j["status"] in ("running", "queued", "waiting"):
+        if j and j["status"] in ("running", "queued", "waiting", "checking", "blocked", "remote"):
             return  # still on it; the new version is picked up when it ends
         new[jid] = new_job(jid, kind, ref, version, prompt, **extra)
 
@@ -534,7 +554,7 @@ def start(st, job, c, resume_prompt=None, dry_run=False):
     proc = launch(job, c, cmd)
     job.update(status="running", pid=proc.pid, started=iso(), started_ts=now(), log=str(session_log(job)),
                attempts=job.get("attempts", 0) + 1, resume_after=None, active_ts=now(), activity=None)
-    if job.get("report"):
+    if job.get("report") and job["kind"] != "verify":
         gstate.session_note(job["report"], job["session_id"], job=job["id"])
     log(f"started {job['id']} session {job['session_id']} pid {proc.pid}"
         + (" (resumed)" if resume_prompt else ""))
@@ -603,6 +623,11 @@ def finish(st, job):
                    notified=False, remote_launches=0)
         log(f"blocked {job['id']}: {sig.get('reason')} (scope {sig.get('scope')})")
         return
+    if sig and sig.get("state") == "final" and sig.get("time", "") >= _utc(job.get("started_ts", 0)):
+        gstate.clear_signal(job["session_id"])
+        return submit_for_check(st, job, sig, res)
+    if job["kind"] == "verify" and res and not res.get("is_error") and res.get("subtype") == "success":
+        return finish_verify(st, job, sig, res)
     if res and not res.get("is_error") and res.get("subtype") == "success":
         if sig and sig.get("state") == "later" and sig.get("time", "") >= _utc(job.get("started_ts", 0)):
             gstate.clear_signal(job["session_id"])
@@ -660,6 +685,129 @@ def finish(st, job):
             f"log {job['log']}")
         return
     return wait(job, now() + 1800, "error; retrying in 30 min", "Continue where you stopped.")
+
+
+# ---- the result check -----------------------------------------------------------------
+
+CHECK_PROMPT = ("/utmapp-bot:db-triage-check {rid} --status {status} --draft {draft} "
+                "--session {sid} --log {log}{follows}")
+
+SENDBACK = (
+    "The independent result check reviewed the finishing comment you recorded with `gamesdb final` "
+    "({status}) and sent the report back to you (send-back {n} of {limit}). Nothing was posted. "
+    "Its findings, which you must address before finishing again:\n\n{reasons}\n\n"
+    "Continue the work from where you are (your context and tools are as you left them): do what it "
+    "asks, with evidence, then run `gamesdb final` again with an updated comment. You have more "
+    "context and data than the check: where your evidence shows a finding is wrong or does not "
+    "apply, you may overrule it. Then finish with `gamesdb final ... --overrule \"<the evidence that "
+    "settles it>\"`, which publishes your result without another check. Overrule only with evidence, "
+    "never to save work the bar asks for. After {limit} send-backs your next final is published "
+    "unchecked.")
+
+
+FOLLOW_UP = (
+    "\n\nYour finishing comment on this report (comment {cid}, {status}) is already public and stays "
+    "visible. When you finish again, your new `gamesdb final` comment is a FOLLOW-UP to it: say why the "
+    "work continued (for example, a reviewer sent it back for more changes) and describe only what "
+    "changed since that comment: what was fixed or changed, new or replaced branches, and new validation "
+    "results. Do not repeat what the earlier comment already says.")
+
+
+def submit_for_check(st, job, sig, res):
+    """The session recorded its finishing comment: queue the result check, or
+    publish it unchecked when the session overrules a send-back or the check
+    has had its turns."""
+    rid = job.get("report") or sig.get("report")
+    # a new final is a new comment, a follow-up to the one an earlier final posted
+    if job.get("final_comment_id"):
+        job["last_final_comment_id"] = job.pop("final_comment_id")
+    job.pop("publish_pending", None)
+    job.update(status="checking", pid=None, ended=iso(),
+               final={k: sig.get(k) for k in ("report", "status", "comment", "time", "overrule")},
+               result=((res or {}).get("result") or "")[-2000:], cost=(res or {}).get("total_cost_usd"))
+    sent_back = job.get("sendbacks", 0)
+    if sig.get("overrule") and sent_back:
+        job["overruled"] = sig["overrule"]
+        log(f"{job['id']} overrules the result check: {sig['overrule'][:300]}")
+        publish_final(st, job)
+        return
+    if sent_back >= MAX_SENDBACKS:
+        log(f"{job['id']}: the result check has sent it back {sent_back} times; publishing unchecked")
+        publish_final(st, job)
+        return
+    if sig.get("overrule"):
+        log(f"{job['id']}: --overrule without a send-back; checking it as usual")
+    vid = f"verify:{rid}"
+    st["jobs"][vid] = new_job(
+        vid, "verify", f"report:{rid}", sig.get("time"),
+        CHECK_PROMPT.format(rid=rid, status=sig.get("status"), draft=sig.get("comment"),
+                            sid=job["session_id"], log=job.get("log"),
+                            follows=f" --follows-up {job['last_final_comment_id']}"
+                            if job.get("last_final_comment_id") else ""),
+        report=rid, triage_job=job["id"])
+    log(f"checking {job['id']}: {sig.get('status')} drafted; result check {vid} queued")
+
+
+def finish_verify(st, job, sig, res):
+    tj = st["jobs"].get(job.get("triage_job") or "")
+    verdict = sig.get("verdict") if sig and sig.get("state") == "verdict" else None
+    if verdict not in ("pass", "fail"):
+        n = job.get("no_verdict", 0)
+        if n < 2:
+            job["no_verdict"] = n + 1
+            return wait(job, now(), "ended without a verdict",
+                        "You ended without recording a verdict. Finish the check and run "
+                        "`gamesdb verdict pass` or `gamesdb verdict fail --reasons @FILE`.")
+        job.update(status="failed", result="the result check recorded no verdict")
+        if tj and tj.get("status") == "checking":
+            log(f"{tj['id']}: the result check reached no verdict; publishing the triage's result")
+            publish_final(st, tj)
+        return
+    gstate.clear_signal(job["session_id"])
+    reasons = (sig.get("reasons") or "").strip()
+    job.update(status="done", verdict=verdict, result=reasons[-2000:] or "pass",
+               cost=res.get("total_cost_usd"))
+    if not tj or tj.get("status") != "checking":
+        log(f"{job['id']}: {verdict}, but {job.get('triage_job')} is no longer waiting for it")
+        return
+    if verdict == "pass":
+        tj["checks_passed"] = tj.get("checks_passed", 0) + 1
+        log(f"result check passed for {tj['id']}; posting its {tj['final']['status']}")
+        publish_final(st, tj)
+        return
+    n = tj.get("sendbacks", 0) + 1
+    tj["sendbacks"] = n
+    log(f"result check failed for {tj['id']} ({n}/{MAX_SENDBACKS}); sending it back")
+    wait(tj, now(), f"sent back by the result check ({n}/{MAX_SENDBACKS})",
+         SENDBACK.format(status=tj["final"]["status"], n=n, limit=MAX_SENDBACKS, reasons=reasons))
+
+
+def publish_final(st, tj):
+    """Post the checked comment and status; on an error keep it for the next round."""
+    f = tj["final"]
+    rid = f.get("report") or tj.get("report")
+    try:
+        api = Api(quiet=True)
+        api.as_machine = True  # under the lease this Mac holds for the job (else 409)
+        if not tj.get("final_comment_id"):
+            body = Path(f["comment"]).read_text().strip()
+            res = api.ok("POST", f"/internal/reports/{rid}/comments", {"body_md": body})
+            tj["final_comment_id"] = res.get("comment_id") or "posted"
+            keep = tunnel.state_dir() / "comments"
+            keep.mkdir(exist_ok=True)
+            (keep / f"{rid}-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}-{tj['final_comment_id']}.md"
+             ).write_text(body + "\n")
+        api.ok("POST", f"/internal/reports/{rid}/triage", {"status": f["status"]})
+    except (Fail, OSError, ValueError) as e:
+        if not tj.get("publish_pending"):
+            log(f"{tj['id']}: posting the checked result failed ({e}); retrying every minute")
+        tj["publish_pending"] = True
+        return False
+    tj.pop("publish_pending", None)
+    tj.update(status="done", ended=iso())
+    settle(st, rid)
+    log(f"done {tj['id']}: {f['status']} posted after the result check")
+    return True
 
 
 DANGLING = (
@@ -758,7 +906,10 @@ def active_since(job):
 def supervise(st):
     """Look after running sessions: ended, silent, or running too long."""
     changed = False
-    for job in st["jobs"].values():
+    for job in list(st["jobs"].values()):
+        if job["status"] == "checking" and job.get("publish_pending"):
+            changed |= bool(publish_final(st, job))
+            continue
         if job["status"] == "remote":
             changed |= supervise_remote(st, job)
             continue
@@ -1055,8 +1206,11 @@ def main(argv):
             if j["status"] in ("running", "remote"):
                 print(f"{a.job} is {j['status']}; nothing to retry", file=sys.stderr)
                 return 1
-            j.update(status="waiting", resume_after=0, attempts=0, dangling=0,
-                     resume_prompt=a.prompt or j.get("resume_prompt") or "Continue where you stopped.")
+            prompt = a.prompt or j.get("resume_prompt") or "Continue where you stopped."
+            if j.get("final_comment_id"):
+                # its finishing comment is public already: the next one follows it up
+                prompt += FOLLOW_UP.format(cid=j["final_comment_id"], status=(j.get("final") or {}).get("status"))
+            j.update(status="waiting", resume_after=0, attempts=0, dangling=0, resume_prompt=prompt)
             if a.prompt:
                 j["wait_reason"] = "resumed early by hand"
         print(f"{a.job} will be resumed within a minute"

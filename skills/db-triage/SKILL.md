@@ -333,13 +333,12 @@ or guest tools than the release you tested, ask them to update to it and
 say whether the problem is still there. Then:
 
 ```sh
-$GDB comment <id> --file comment.md
-$GDB triage-status <id> needs_clarification
+$GDB final <id> --status needs_clarification --file comment.md
 ```
 
 If the reporter already answered a clarification and it still does not
-reproduce, or nothing more could be asked, use `cannot_reproduce`, and the
-comment says what was tried.
+reproduce, or nothing more could be asked, use `cannot_reproduce` (also
+through `$GDB final`), and the comment says what was tried.
 
 ## 7. Reproduced
 
@@ -349,17 +348,38 @@ settings, what triggers it), so the next agent or a maintainer gets there
 directly. Write it as directions, without referring to the reporter's
 pictures. The status stays `in_progress`.
 
-**One report can hold more than one bug.** List every symptom the reporter
-describes (an error box, a wrong value on screen, a setting that cannot be
-changed, a crash), and keep the list until the end. A symptom that goes
-away with your fix may have a cause of its own one layer earlier: a game
-that misbehaves because the driver answered a query oddly, and a driver
-that then fails under that behavior. Look for the earliest thing that
-differs from a working run (CrossOver, or real hardware's documented
-behavior), not only the last thing that broke. The fixes can then sit in
-different repositories: the user-mode driver (virtio-win-mesa), the
-kernel-mode driver (kvm-guest-drivers-windows), virglrenderer, the backend
-shims, QEMU or UTM. Each gets its own commits and its own fix branch.
+**One report can hold more than one bug, and fixing one is not the end.**
+List every symptom the reporter describes (an error box, a wrong value on
+screen, a setting that cannot be changed, a crash) in your handoff, and keep
+the list until the end. The triage is complete only when **every** symptom
+on that list is either fixed, with evidence from the reporter's own path,
+or settled as outside UTM's control with evidence (`wont_fix`). Fixing the
+crash you found first does not finish the report while the reporter's own
+complaint (here, a setting they cannot change) is still there.
+
+Bugs are often layered. A game may misbehave because the driver answered a
+query oddly, and then a driver bug fails under that behavior. Fixing the
+later failure (the crash) can hide the earlier cause, or expose the next
+one. Look for the earliest thing that differs from a working run
+(CrossOver, or real hardware's documented behavior), not only the last
+thing that broke. After each fix, rerun the reporter's path and check the
+symptom list again. The fixes can sit in different repositories: the
+user-mode driver (virtio-win-mesa), the kernel-mode driver
+(kvm-guest-drivers-windows), virglrenderer, the backend shims, QEMU or UTM.
+Each gets its own commits and its own fix branch.
+
+**Make the design decisions yourself.** The person who reviews a fix
+branch only accepts or rejects it. They do not make design decisions, and
+nobody answers questions in auto mode. When a fix needs a choice (for
+example, whether the driver may offer 10-bit display modes before 10-bit
+output exists), weigh it against the documentation (MSDN, the Vulkan spec)
+and the evidence, choose, build it, test it, and explain the choice and its
+trade-off in the commit message and the comment. Never finish with "a
+maintainer has to decide" or a question for the reviewer. A fix that is
+large or spans layers is still the job: work it in steps, with
+`/utmapp-bot:investigation-handoff` and `$GDB session later` between them.
+Only a blocker that a person must clear (docs/gamesdb.md), or evidence that
+the cause is outside UTM's control, stops it.
 
 Then work it with the existing skills:
 
@@ -403,26 +423,39 @@ Then work it with the existing skills:
    show the user the commits before publishing. Auto: publish them.
 
 **Before finishing, check the fix against the symptom list.** Rerun the
-reporter's path with the fix and go through every symptom: gone, or still
-there. For each one still there, explain it from the evidence you already
-have (a probe's output, a query that returned nothing, a log line), and
-either fix it too (another commit, maybe another repository) or say in
-the comment what causes it and that it needs its own fix. Never call a
-leftover symptom "a separate issue" without saying what you measured about
-it. The reporter's own complaint (what they cannot do) matters more
-than a crash you found on the way.
+reporter's path with every fix and go through every symptom: gone, or still
+there. A symptom the reporter described that is still there means the
+triage is not done: find its cause and fix it too (another commit, maybe
+another repository), or prove it is outside UTM's control. Never call a
+leftover symptom "a separate issue". The reporter's own complaint (what
+they cannot do) matters more than a crash you found on the way.
+
+**Due diligence**, all of it before `fix_proposed` (the result check below
+verifies each item):
+1. Every reported symptom reproduced on the release stack and on the
+   current stack, at the reporter's settings, with the run directories.
+2. The layer decided with evidence (`/utmapp-bot:attribute-to-layer`),
+   including the CrossOver comparison (step 5b) on the same backend.
+3. A minimal repro probe for each fixed bug that fails before and passes
+   after (`/utmapp-bot:write-gpu-probe`), where a probe can show it.
+4. The reporter's path rerun with all fixes: every symptom gone.
+5. `/utmapp-bot:validate-stack`: every cell of the matrix (both backends),
+   rendered and within the baseline band. A cell that cannot run here is a
+   problem to fix or a blocker, not a line in the comment.
+6. `/utmapp-bot:perf-regression`: an interleaved A/B against the current
+   stack, with the runs it asks for.
+7. `/utmapp-bot:land-stack-change`, its review step included, and each
+   repository's fix branch published.
 
 Finish with one of:
 - `fix_proposed`: after the fix branches are published. The comment links
   each `FIX-BRANCH` (and its `COMPARE` view; one per repository), with the
   validation results, and says a maintainer will review it before anything
-  is submitted. It lists **what is fixed** (each symptom, and which fix
-  addresses it) and **what is still open** (each remaining symptom, with
-  its cause or what was measured about it). Still open symptoms do not
-  keep the report `in_progress` once the triage is exhausted (nothing left
-  here to measure or try): finish it as `fix_proposed` all the same, and
-  recommend that the reporter file a new report for what is still open
-  once the fix is merged and released, so it is triaged on the fixed stack.
+  is submitted. It lists **what is fixed**: each reported symptom, and
+  which fix addresses it. A reported symptom left open is not
+  `fix_proposed`. Keep working (above). Something you found on the way that
+  the reporter did not report may stay open, if the comment says what was
+  measured about it.
 - `wont_fix`: outside what UTM controls (a hardware limit, Apple's
   D3DMetal, a known architectural issue). The comment explains why, with
   the evidence or a public source. The usual evidence for a backend bug is
@@ -431,9 +464,52 @@ Finish with one of:
   game fails the same way in CrossOver with the same backend, so the
   problem is in the backend rather than in UTM.
 
+## Finishing: the result check
+
+Every finishing status (`fix_proposed`, `wont_fix`, `needs_clarification`,
+`cannot_reproduce`) goes out through one command, with the final comment:
+
+```sh
+$GDB final <id> --status <status> --file comment.md [--allow-link DOMAIN ...]
+```
+
+It runs the same checks as `$GDB comment`. Interactive, it posts the
+comment and sets the status. **Auto, it posts nothing**: it records the
+draft for the dispatcher, and you end your turn. The dispatcher then runs
+an independent result check (`/utmapp-bot:db-triage-check`). The check
+compares the draft with the report and with your evidence: every reported
+symptom fixed or settled, the due diligence above done, and the comment
+supported by the evidence. When it passes, the dispatcher posts the comment
+and sets the status. When it fails, the dispatcher resumes **this session**
+with the reasons, and you continue the work from where you are: fix what it
+names, then run `$GDB final` again. You have more context and data than
+the check. Where your evidence shows a finding is wrong or does not apply,
+overrule it: `$GDB final <id> --status <status> --file comment.md
+--overrule "<the evidence that settles it>"` publishes your result without
+another check. Overrule with evidence, never to skip work the bar asks for.
+After three send-backs, your next `final` is published unchecked, so the
+two sessions never loop. Do not post finishing comments or
+statuses yourself in auto mode: `$GDB triage-status` refuses them there.
+Progress comments (reproduced, where the work stands) still use
+`$GDB comment`.
+
+**A posted finishing comment stays.** When a report you already finished
+is resumed (a maintainer's `dispatch retry`, a reviewer's further changes),
+every finishing comment posted so far is public and stays visible. The
+next `$GDB final` comment is a follow-up to the most recent one: open with
+why the work continued (for example, "a reviewer sent the fix back for
+more changes"), then describe only what changed since that comment: what
+was fixed or changed, new or replaced branches (with links), and the new
+validation results. A report can collect several follow-ups this way, each
+building on the one before. Do not repeat what earlier comments already
+say. Where a follow-up replaces something an earlier comment stated (a
+branch, a number, an open item), say so plainly ("replaces the branches
+linked above"), so a reader of the whole thread knows which is current.
+The status follows the new result as usual.
+
 **Never end your turn with the report `in_progress` and nobody on it.**
-Keep working; or, when the work must wait (a long build, a reset, a
-question to a maintainer), write the handoff
+Keep working; or, when the work must wait (a long build, a reset), write
+the handoff
 (`/utmapp-bot:investigation-handoff`), comment briefly on where it stands,
 and schedule the return. In auto mode that is `$GDB session later --hours H
 --reason "<what to do then>" --handoff <file>`, which has the dispatcher

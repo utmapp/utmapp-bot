@@ -205,6 +205,14 @@ The triage pipeline (the site's `/triage` page) and its statuses:
 | `wont_fix` | reproduced, but outside what UTM controls (a hardware limit, a known architectural issue), or already fixed: reproduced on release, not on the current stack (the comment names the build that fixes it) |
 | `fix_proposed` | a validated fix is on a branch of the bot's GitHub fork (`$GDB fix-branch`), and the comment links it. Triage opens no pull request except through UTM's own utm-review and utm-submit, for a fix in UTM itself; for every other repository a maintainer reviews and consolidates the branches and submits them |
 
+The four finishing statuses (`needs_clarification`, `cannot_reproduce`,
+`wont_fix`, `fix_proposed`) go out with their comment through `$GDB final
+ID --status S --file F`. Interactive, it posts both. In auto mode it posts
+nothing: an independent result check (`/utmapp-bot:db-triage-check`)
+reviews the draft first, and the dispatcher posts it when the check passes,
+or resumes the triage session with the findings (db-triage, "Finishing").
+`$GDB triage-status` refuses those statuses in auto mode.
+
 `$GDB comment ID --file F` posts as "Auto-Triage". The comment is public,
 may carry Markdown links (user comments cannot), and is at most 20000
 characters. The client runs the personal-data lint
