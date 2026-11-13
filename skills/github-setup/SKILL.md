@@ -44,14 +44,18 @@ The agent (`app.getutm.utmapp-bot.github`) runs `ghbot run`. How it works:
     `answer-utm-issue <n> --auto`, which reproduces the issue, finds the
     cause and replies. A small fix it builds and opens as a PR from the
     bot's fork. For a large one it posts the cause and a fix outline.
+  - on the account's own PR (a fix it opened) or issue: any org member's
+    comment, mention or not. It is never reviewed; the comment is answered
+    (and a requested change made on the PR's branch), in the session of the
+    issue that opened the PR when this Mac has it, else in a new one.
   Either trigger claims the PR or issue.
 - **Follow-ups:** later comments go to that same session. They come from
   org members, and from the PR's or issue's author once a member has
   started the conversation. Only an org member's comment can get a fix
   built and opened as a PR: `utmbot gh pr` refuses any other round. The session replies only where it is addressed. "Review
   again" runs the review again on the new head.
-- **Ignored, with no reply:** everyone else, bot accounts, and the
-  account's own PRs.
+- **Ignored, with no reply:** everyone else, bot accounts, review
+  requests on the account's own PRs, and its own comments.
 - **Several Macs on one account:** the first Mac to add 👀 to the PR owns
   it (GitHub answers 201). A Mac that gets 200 (the account's 👀 is
   already there) never touches the PR. Deleting the 👀 releases it.

@@ -430,6 +430,58 @@ def main():
     check(open_pr(b, 10, rounds["osy"], "fix/y") == 3 and len(w.opened) == 1,
           "the same round from a second Mac is DUPLICATE: one PR")
 
+    # the account's own PR (the fix it opened for issue 10): members are answered without a
+    # mention, in issue 10's session, never reviewed; everyone else is ignored
+    num = w.opened[0]["number"]
+    w.prs[num].update(pull_request={"url": f"https://x/pulls/{num}"}, head={"ref": "fix/x", "sha": f"sha{num}a"},
+                      author_association="NONE", created_at=ts(43), merged=False)
+    w.comment(num, "randomuser", "this breaks my setup", 44)
+    out = a.poll()
+    check("nothing" in out[num] and not a.rec(num).get("owner"), "a non-member's comment on the bot's own PR is ignored")
+    w.request_review(num, "osy", 45)
+    w.comment(num, "osy", "1) does this apply to QEMU VMs as well 2) why not in the Script handler?", 46)
+    a.poll()
+    rp = a.rec(num)
+    check(rp.get("owner") == "mine" and [i["kind"] for i in rp.get("pending", [])] == ["answer"],
+          "a member's comment on the bot's own PR is answered without a mention (no review request)")
+    check(rp.get("session_id") == a.rec(10)["session_id"] and rp.get("origin") == 10,
+          "the answer goes to the session of the issue that opened the PR")
+    with a:
+        st = S.load()
+        r = S.pr_load(10); r["job"].update(status="running", pid=os.getpid()); S.pr_save(r)
+        jobs.schedule(st, a.cfg)
+        check(S.pr_load(num)["job"].get("held_note", "").startswith("its session is running"),
+              "one session never runs twice (held while issue 10's session runs)")
+        r = S.pr_load(10); r["job"].update(status="idle", pid=None); S.pr_save(r)
+        jobs.schedule(st, a.cfg)
+        S.save(st)
+    time.sleep(1.5)
+    last = (Path(root) / "claude.args").read_text().split("=====RUN=====")[-2]
+    check("--resume" in last and rp["session_id"] in last and "own pull request" in last
+          and "issue #10" in last and "review-utm-pr " + str(num) not in last and "Script handler" in last,
+          "the issue's session is resumed with the comment and told to answer, not review")
+    w.comment(num, "maint", "and what about iOS?", 47)
+    a.poll()
+    check([i["kind"] for i in a.rec(num)["pending"]] == ["followup"], "later member comments are follow-ups")
+
+    w.pr(30, BOT, "a fix opened by hand", at=50)
+    w.comment(30, "osy", "why here?", 51)
+    a.poll()
+    r30 = a.rec(30)
+    check(r30.get("own") and [i["kind"] for i in r30["pending"]] == ["answer"] and not r30.get("session_id"),
+          "an own PR with no issue session on this Mac gets a new session")
+    with a:
+        st = S.load()
+        for n in list(S.pr_all()):
+            if n["pr"] != 30 and n["job"].get("status") in ("running", "queued", "waiting"):
+                n["job"]["status"] = "idle"; S.pr_save(n)
+        jobs.schedule(st, a.cfg)
+        S.save(st)
+    time.sleep(1.5)
+    last = (Path(root) / "claude.args").read_text().split("=====RUN=====")[-2]
+    check("--session-id" in last and "own pull request" in last and "/utmapp-bot:review-utm-pr" not in last,
+          "its first prompt answers the comment and does not start a review")
+
     print(f"\n{'ALL PASSED' if not FAILS else f'{len(FAILS)} FAILED'} ({root})")
     return 1 if FAILS else 0
 

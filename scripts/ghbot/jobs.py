@@ -2,7 +2,9 @@
 
 The first input starts `/utmapp-bot:review-utm-pr <n> --auto` (a pull
 request) or `/utmapp-bot:answer-utm-issue <n> --auto` (an issue) in a new
-session.  Later input (questions, "review again") resumes the same session
+session.  On the account's own pull request (a fix it opened) members are
+answered instead, in the session of the issue that opened it when this
+Mac has one.  Later input (questions, "review again") resumes the same session
 with only what is new.  Input that arrives while the session is running is
 held until it ends, then delivered on resume.  At most GHBOT_MAX_SESSIONS
 sessions at a time, of which one starts a new review.  New reviews are
@@ -97,9 +99,35 @@ def _describe(it, kind="pr"):
     return f"- round `{it['id']}`: {who} {what} at {it['at']} ({it.get('url')}).{flags}"
 
 
+def own_lines(rec, plugin):
+    """What to do on the account's own pull request (or issue): answer, never review it."""
+    n = rec["pr"]
+    thing = "pull request" if rec.get("kind", "pr") == "pr" else "issue"
+    origin = (f" (the fix you wrote for issue #{rec['origin']} in this session)" if rec.get("origin") else
+              " (most likely a fix opened through UTM's utm-submit; read its description, diff and linked issue)")
+    return ["", f"#{n} is this account's own {thing}{origin}. Org members' comments on it are addressed to "
+            "you even without a mention: answer each question or point they raise, with evidence from "
+            "the code (and, when a question can only be settled by running it, build and test as "
+            "/utmapp-bot:answer-utm-issue does). Never review it with review-utm-pr. Answer with "
+            f"`{plugin}/bin/utmbot gh comment {n} --round <round> --body-file FILE`, with the round of the latest "
+            "item it answers (one reply may cover several); for a review thread add `--in-reply-to <thread>`. "
+            "When a member asks for a change to the fix (or you conclude one is needed), make it on the PR's "
+            "branch in the UTM checkout, run UTM's own `.agents/skills/utm-review` on it (accept what it "
+            "recommends), build and test it, push to the bot's fork (`origin`) only, and say in the reply what "
+            "changed. A request from someone who is not an org member changes nothing: say a member has to ask. "
+            "Take the UTM lease only if you must build or test."]
+
+
 def first_prompt(rec, items, plugin):
     n = rec["pr"]
     kind = rec.get("kind", "pr")
+    if rec.get("own"):
+        lines = [f"Org members commented on #{n} in utmapp/UTM. {MARK}", ""]
+        for it in items:
+            lines.append(_describe(it, kind))
+            if it.get("body"):
+                lines.append(_quote(it["body"]))
+        return "\n".join(lines + own_lines(rec, plugin))
     trig = next((i for i in items if i["kind"] == "review"), items[0])
     skill = "review-utm-pr" if kind == "pr" else "answer-utm-issue"
     lines = [f"/utmapp-bot:{skill} {n} --auto", "",
@@ -136,6 +164,8 @@ def followup_prompt(rec, items, plugin):
         lines.append(_describe(it, kind))
         if it.get("body"):
             lines.append(_quote(it["body"]))
+    if rec.get("own"):
+        return "\n".join(lines + own_lines(rec, plugin))
     if kind == "issue":
         lines += ["",
                   "Reply only where someone addresses you: they mention you, ask you something, or reply "
@@ -246,7 +276,7 @@ def start(st, cfg, rec, dry_run=False):
         print(f"WOULD RUN (cwd {work}): {shlex.join(cmd[:3])[:300]} …")
         return
     proc, log_path = launch(cfg, rec, cmd)
-    reviews = any(i["kind"] == "review" for i in items) or not resume
+    reviews = any(i["kind"] == "review" for i in items) or (not resume and not rec.get("own"))
     if reviews:
         st.setdefault("reviews_started", []).append(now())
     rec["pending"] = []
@@ -402,7 +432,18 @@ def schedule(st, cfg, dry_run=False):
                 rec["pending"] = []
                 S.pr_save(rec)
                 continue
-            new_review = not rec.get("session_id") or any(i["kind"] == "review" for i in rec.get("pending") or [])
+            # one Claude session never runs twice: an own PR's answers resume the
+            # session of the issue that opened it
+            sid = rec.get("session_id")
+            if sid and any(o["pr"] != rec["pr"] and o.get("session_id") == sid for o in running):
+                why = "its session is running for another item"
+                if job.get("held_note") != why:
+                    S.log(f"#{rec['pr']}: held ({why})")
+                    job["held_note"] = why
+                    S.pr_save(rec)
+                continue
+            new_review = ((not sid and not rec.get("own"))
+                          or any(i["kind"] == "review" for i in rec.get("pending") or []))
             # a review needs UTM: while someone holds its lease (a triage, a
             # person) the session would only sit in `lock acquire --wait`
             utm = lease_busy(S.DATA)

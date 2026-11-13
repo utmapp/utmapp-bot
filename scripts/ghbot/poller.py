@@ -6,6 +6,11 @@ request's author may too, but only once a member has started the
 conversation (initiated_by).  Everyone else, and every bot account, is
 ignored without a reply.
 
+The account's own pull requests (a fix utm-submit opened) are never
+reviewed, but every comment a member leaves there is for the bot (no
+mention needed) and is answered, in the session of the issue that opened
+the PR when this Mac has it.
+
 Ownership among the Macs that share the bot account: a 👀 reaction on the
 pull request.  POST answers 201 when this call created it (this Mac owns
 the PR) and 200 when the account already had it (another Mac does: never
@@ -205,22 +210,21 @@ class Poller:
 
         me = self.login().lower()
         author = pr["user"]["login"].lower()
-        if author == me:
-            # its own PR (or issue): review-utm-pr never reviews those, and
-            # answering review feedback on them is not this poller's job
-            if not self.dry:
-                rec["cursor"] = newest
-                S.pr_save(rec)
-            return f"the account's own {'PR' if kind == 'pr' else 'issue'}: not handled"
+        # its own PR (or issue), e.g. a fix utm-submit opened: never reviewed,
+        # but a member's comment (mention or not) is answered (kind "answer"),
+        # in the session of the issue that opened it when this Mac has it
+        own = author == me
+        rec["own"] = own
+        first = "answer" if own else "review"
         inputs = []
         for it in items:
             who = it.get("author") or ""
             if who.lower() == me or it.get("author_type") == "Bot" or who.endswith("[bot]"):
                 continue
             member = self.is_member(st, who, it.get("assoc"))
-            started = bool(rec.get("initiated_by")) or any(i["kind"] == "review" for i in inputs)
+            started = bool(rec.get("initiated_by")) or any(i["kind"] in ("review", "answer") for i in inputs)
             if it["type"] == "review_request":
-                if member:
+                if member and not own:
                     it["kind"] = "review" if not started else "followup"
                     it["member"] = True
                     inputs.append(it)
@@ -228,8 +232,8 @@ class Poller:
             it["mentions"] = self.mentions_me(it["body"])
             if not (member or (who.lower() == author and started)):
                 continue  # may not talk to the bot: no reply
-            if not started and it["mentions"]:
-                it["kind"] = "review"
+            if not started and (it["mentions"] or (own and member)):
+                it["kind"] = first  # on its own PR any member's comment is for the bot
             elif started:
                 it["kind"] = "followup"
             else:
@@ -258,9 +262,16 @@ class Poller:
             rec.update(owner="mine", reaction_id=rid, claimed=S.utc())
             S.log(f"#{n}: claimed (👀 {rid})")
         if not rec.get("initiated_by"):
-            rec["initiated_by"] = next(i["author"] for i in inputs if i["kind"] == "review")
+            rec["initiated_by"] = next(i["author"] for i in inputs if i["kind"] in ("review", "answer"))
+        if own and not rec.get("session_id"):
+            origin = next((r for r in S.pr_all() if int(n) in (r.get("opened_prs") or []) and r.get("session_id")),
+                          None)
+            if origin:
+                # resume the session that wrote the fix: it has the context
+                rec.update(session_id=origin["session_id"], origin=origin["pr"])
+                S.log(f"#{n}: answered in issue #{origin['pr']}'s session {origin['session_id']}")
         for it in inputs:
-            if it.get("mentions") or it["kind"] == "review":
+            if it.get("mentions") or it["kind"] in ("review", "answer"):
                 self.ack(it)
             it.pop("assoc", None)
             it["body"] = it["body"][:20000]
