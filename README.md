@@ -18,7 +18,7 @@ Auto-Triage for the UTM games database.
 - Per task:
   - a Windows 11 ARM64 ISO to provision Windows VMs;
   - Xcode and a UTM checkout to build UTM (`build-utm`);
-  - `gh`, logged in, for skills that read issues or publish fix branches
+  - `gh`, logged in, for skills that read issues or publish fixes (pull requests and fix branches)
     (as the bot account, with the `repo` or `notifications` scope, for
     `github-setup`);
   - CrossOver with a signed-in Steam bottle for `crossover-compare`;

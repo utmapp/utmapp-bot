@@ -43,7 +43,13 @@ The agent (`app.getutm.utmapp-bot.github`) runs `ghbot run`. How it works:
   - on an issue: an org member mentions `@<bot>`. That starts
     `answer-utm-issue <n> --auto`, which reproduces the issue, finds the
     cause and replies. A small fix it builds and opens as a PR from the
-    bot's fork. For a large one it posts the cause and a fix outline.
+    bot's fork (to UTM, or to the org's repository the bug is in, with a
+    draft UTM PR when UTM pins that repository by commit). For a large one
+    it posts the cause and a fix outline.
+  - on an issue or PR this account already commented on: the author's
+    later comment, mention or not (the bot asked, they answered). GitHub's
+    thread decides, so this also covers a triage someone ran by hand. A
+    new session continues that work.
   - on the account's own PR (a fix it opened) or issue: any org member's
     comment, mention or not. It is never reviewed; the comment is answered
     (and a requested change made on the PR's branch), in the session of the
@@ -51,8 +57,10 @@ The agent (`app.getutm.utmapp-bot.github`) runs `ghbot run`. How it works:
   Either trigger claims the PR or issue.
 - **Follow-ups:** later comments go to that same session. They come from
   org members, and from the PR's or issue's author once a member has
-  started the conversation. Only an org member's comment can get a fix
-  built and opened as a PR: `utmbot gh pr` refuses any other round. The session replies only where it is addressed. "Review
+  started the conversation or the bot has commented there. A small fix whose cause the conversation
+  confirms is built, validated and opened as a PR in any of these rounds
+  (the same rule as the first round); only an org member's request gets a
+  large fix built. The session replies only where it is addressed. "Review
   again" runs the review again on the new head.
 - **Ignored, with no reply:** everyone else, bot accounts, review
   requests on the account's own PRs, and its own comments.
@@ -75,6 +83,7 @@ $UB gh status [--scan]      # PRs this Mac knows; --scan: open PRs carrying the 
 $UB gh poll --dry-run       # what would be picked up now (claims nothing)
 $UB gh pause | resume       # stop/start new sessions (running ones go on)
 $UB gh retry PR             # after clearing a blocker (or a failed session)
+$UB gh catchup [--apply]    # authors who answered the bot and got no reply: list / queue them
 $UB gh release PR           # free a PR for other Macs (also one whose Mac is gone)
 ```
 

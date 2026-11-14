@@ -1,6 +1,6 @@
 ---
 name: answer-utm-issue
-description: Answer a utmapp/UTM GitHub issue of any kind — read it, reproduce it on the configuration the reporter ran (graphics through repro-gpu-issue, the app's UI on macOS VMs and iOS simulators, VM behaviour in a matching VM), find the cause in UTM's code, then either fix it (small: built and tested before and after, then submitted only through UTM's own utm-review and utm-submit) or describe the cause and a fix outline (large: an org member may then ask for the fix), and reply on the issue with the results. Use when given a UTM issue number or URL and asked to answer, reproduce, look into or fix it, or when the GitHub poller starts it for an @-mention on an issue.
+description: Answer a utmapp/UTM GitHub issue of any kind — read it, reproduce it on the configuration the reporter ran (graphics through repro-gpu-issue, the app's UI on macOS VMs and iOS simulators, VM behaviour in a matching VM), find the cause in UTM's code or in the layer of the graphics stack that owns it, then either fix it (small: built and tested before and after, then submitted only through UTM's own utm-review and utm-submit; a fix in another repository the org owns is opened as a pull request there, with a draft UTM pull request when UTM pins it by commit) or describe the cause and a fix outline (large: an org member may then ask for the fix), and reply on the issue with the results. Use when given a UTM issue number or URL and asked to answer, reproduce, look into or fix it, or when the GitHub poller starts it for an @-mention on an issue.
 argument-hint: "<issue number or URL> [--auto]"
 ---
 
@@ -47,6 +47,12 @@ Check it is new before reproducing:
 
 When something is missing (a version, a log), go on and say in the reply
 what would have helped. Do not wait.
+
+**When this account already commented here** (an earlier triage, by hand
+or by the poller) and the reporter answered: this is that triage
+continuing. Read your own comments for what was tested, found and asked,
+keep what still holds, and go on from the reporter's answer. It is
+addressed to you whether or not it mentions you.
 
 ## 2. Reproduce where it happens
 
@@ -98,12 +104,18 @@ stop. The outline names the files, the approach, the risks, and how to
 test it.
 
 **When the GitHub poller started you:**
-- Open a PR only for a round an org member asked in; `gh pr` refuses any
-  other round. The first round always qualifies, because only a member can
-  summon the bot.
-- A later "please build it" from the issue's author: answer that an org
-  member has to ask for it.
-- On a member's request, build even a large fix, if it can be done well.
+- The rule above holds in every round, the reporter's included. When
+  their answer to your questions (or anything else in the conversation)
+  lets you confirm the root cause, and the fix is small, build it,
+  validate it and open the PR, exactly as in the first round. Nobody has
+  to ask for it.
+- A large fix is built only on an org member's request (the prompt marks
+  who is one), and then even a large one, if it can be done well. A
+  "please build it" from anyone else does not change small or large: for
+  a large one, answer that an org member has to ask for it.
+- `gh pr --check` takes the round of the comment the fix answers. It
+  refuses a round the poller never delivered, and notes when the round's
+  author is not a member.
 
 ## 5. The fix
 
@@ -114,6 +126,26 @@ test it.
 - **Graphics stack code:** land it the way `/utmapp-bot:land-stack-change`
   says. That covers the API documentation checks, related paths that share
   the bug, the code review and validating again afterwards.
+- **The fix is where the bug is,** which is often not UTM: virglrenderer,
+  a backend shim, QEMU, the guest driver. Fix it in that repository and
+  publish it as land-stack-change section 7 says, with the same review and
+  validation as a UTM change (`/utmapp-bot:validate-stack`,
+  `/utmapp-bot:perf-regression`):
+  - a repository the org owns (`utmapp/<name>`): a pull request there,
+    `"${CLAUDE_PLUGIN_ROOT}/bin/gamesdb" fix-branch <checkout> --branch
+    fix/issue-<n>-<slug> --pr --title … --body-file …`, with that
+    repository's attribution rules. When UTM pins it by commit, the UTM
+    pull request below moves the pin to the fork commit and is opened as a
+    **draft** (`--draft` on utm-submit's `gh pr create`); a maintainer
+    says on it when the other one is merged, and then you re-pin to the
+    merged commit and mark it ready.
+  - a repository someone else holds (osy's guest driver, KMD and Mesa
+    trees): a fix branch only (`fix-branch` without `--pr`), linked in the
+    reply. No pull request, and no UTM pull request for it.
+  - **Started by the GitHub poller:** bracket the org repository's pull
+    request like UTM's: `$UB gh pr <n> --round <round> --repo
+    utmapp/<name> --check` before it (its marker line ends the body), and
+    `--record <PR url>` with the same `--repo` after it.
 - **Build and test:** fail-before and pass-after on the configuration from
   step 2. A UI change also needs the screenshots `review-utm-pr` step 6
   requires: every configuration in CONTRIBUTING.md, and the unchanged
@@ -122,7 +154,7 @@ test it.
 - **Submit only through UTM's own skills,** from the worktree. Never open
   the PR by hand (no `gh pr create`, no API call).
   1. **Started by the GitHub poller,** first: `$UB gh pr <n> --round
-     <round> --check`. It refuses a round no org member asked in, and one
+     <round> --check`. It refuses a round the poller did not deliver, and one
      this account already answered (DUPLICATE: clean up and end). It
      prints a marker line to end the PR body with.
   2. **UTM's review:** `.agents/skills/utm-review/SKILL.md`, all of its
@@ -145,7 +177,9 @@ One comment on the issue, from what you saw:
 - the result: reproduced or not, with the measurements and screenshots;
 - the cause (`file:line`), or why it could not be found here;
 - then exactly one of:
-  - the PR, with what it changes;
+  - the PR, with what it changes (every one: the org repository's, and
+    the draft UTM one that waits for it; or the fix branch for a
+    repository that gets no PR);
   - the fix outline (large);
   - what is still needed from the reporter (not reproduced: the logs and
     details `repro-gpu-issue` step 3 lists, or their equivalent).
@@ -175,4 +209,5 @@ details.
 
 - what was found (the cause, or not reproduced);
 - the comment's URL;
-- the PR's URL, or why there is none (large; nobody asked; not reproduced).
+- each PR's URL (and which is a draft, waiting for which), each fix
+  branch, or why there is none (large; nobody asked; not reproduced).

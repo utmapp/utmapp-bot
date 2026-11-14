@@ -1,6 +1,6 @@
 ---
 name: land-stack-change
-description: Turn an investigation's working tree into clean, reviewable commits across the repos of the VirtIO GPU stack (guest driver, KMD, virglrenderer, backend shims, QEMU, UTM) — separate diagnostics from the fix, check it against the API documentation (MSDN for DirectX APIs and DDIs, the Vulkan spec), fix the related paths that share the bug, run /code-review at high effort before anything is published and validate again after it, split it into logical commits that each carry their own evidence, follow each repo's own attribution and message rules, and leave nothing pushed that was not asked for. Every skill that changes code in the UTM graphics stack lands it through here (db-triage, triage-gpu-issue, attribute-to-layer, repro-gpu-issue). Use when asked to "commit this", "clean up the branch", "prepare a PR", "squash", or "land the fix".
+description: Turn an investigation's working tree into clean, reviewable commits across the repos of the VirtIO GPU stack (guest driver, KMD, virglrenderer, backend shims, QEMU, UTM) — separate diagnostics from the fix, check it against the API documentation (MSDN for DirectX APIs and DDIs, the Vulkan spec), fix the related paths that share the bug, run /code-review at high effort before anything is published and validate again after it, split it into logical commits that each carry their own evidence, follow each repo's own attribution and message rules, and publish each repo's fix where it belongs (a pull request to UTM through UTM's own skills, a pull request to any other repository the org owns, a fix branch for anyone else's; a draft UTM pull request when UTM pins the dependency by commit), leaving nothing pushed that was not asked for. Every skill that changes code in the UTM graphics stack lands it through here (db-triage, triage-gpu-issue, attribute-to-layer, repro-gpu-issue). Use when asked to "commit this", "clean up the branch", "prepare a PR", "squash", or "land the fix".
 argument-hint: "[repo paths]"
 ---
 
@@ -55,8 +55,8 @@ rerun the proof, to be sure the fix does not depend on a diagnostic.
 ## 4. Review before publishing
 
 Every change to the UTM graphics stack goes through this before it is
-pushed or published as a fix branch (db-triage's `fix-branch` included),
-whichever skill made it.
+pushed or published, as a fix branch or as a pull request to any
+repository (section 7), whichever skill made it.
 
 1. **Check it against the documentation.** For anything that touches the
    DirectX stack (a D3D/DXGI API or a WDDM/D3D DDI, user-mode or
@@ -119,15 +119,103 @@ whichever skill made it.
   or by cherry-picking onto a fresh branch.
 - **Do not push unless asked.** Then use `--force-with-lease`, never
   `--force`.
-- **Pull requests:** to utmapp/UTM only through UTM's own skills,
-  `.agents/skills/utm-review` then `.agents/skills/utm-submit` (in auto
-  mode, accept every change the review recommends, and validate again),
-  never by hand. To any other repository, never: fix branches only. Report every commit hash and which ones are unpushed.
+- Report every commit hash and which ones are unpushed.
 
-## 7. Report
+## 7. Where it is published
+
+One rule for every skill that publishes a fix (db-triage,
+answer-utm-issue, triage-gpu-issue). The owner of the repository the fix
+belongs in decides, and you look it up instead of assuming: the `*_REPO`
+and `*_SRC` lines of UTM's `patches/sources` say where UTM takes each
+dependency from, and `gh api repos/<owner>/<name>` says whether it exists.
+
+| The fix is in | Publish it as |
+|---|---|
+| utmapp/UTM | a pull request, only through UTM's own skills: `.agents/skills/utm-review`, then `.agents/skills/utm-submit` (in auto mode, accept every change the review recommends, and validate again). Never by hand |
+| any other repository the org owns (`utmapp/<name>`: virglrenderer, dxmt, d3dmetal-native, MoltenVK, qemu, …) | a pull request against it, from a branch on the bot's own fork of it: `gamesdb fix-branch … --pr` |
+| a repository someone else holds (osy's: the guest driver, the KMD, Mesa, Vulkan-Loader; a third-party upstream) | a fix branch on the bot's fork, no pull request: `gamesdb fix-branch` without `--pr`. A person reviews it, consolidates it and submits it |
+
+A repository the org owns is not "someone else's project": opening the
+pull request there is the expected result, not something to leave for a
+person. Never push to the org's repository itself, only to the bot's fork.
+
+**A pull request to the org's repository:**
+
+- The bar is the same as for UTM: section 4 (documentation, related paths,
+  `/code-review high`, validation again), `/utmapp-bot:validate-stack` and
+  `/utmapp-bot:perf-regression` where the change can affect them, all
+  before it is opened. Nothing is opened to "get feedback".
+- That repository's own rules for commits and attribution (section 5), not
+  UTM's.
+- The base is the branch UTM's pinned commit is on (`git branch -r
+  --contains <pin>` in a clone of it). That is usually the default branch,
+  which `fix-branch` uses unless `--base` names another.
+- The body: the problem, the cause, the fix, and the evidence (probe fail
+  before and pass after, the matrix, the perf A/B), and the UTM issue or
+  games-db report it comes from. The bot is only notified of comments on
+  utmapp/UTM, so the body asks reviewers to write on the UTM issue or
+  pull request it links when they want an answer or a change from the bot. No session links, and attribution only as
+  that repository asks.
+
+```sh
+GDB="${CLAUDE_PLUGIN_ROOT}/bin/gamesdb"    # works without the games-db tunnel
+$GDB fix-branch <checkout> --branch <name> --pr --title "<component: summary>" --body-file <file> [--base <branch>]
+```
+
+It prints `FIX-BRANCH`, `COMPARE`, `HEAD <sha>` and `PR <url>`. It
+refuses a repository the org does not own, and UTM itself. When the
+checkout's `origin` is not the org's repository (a mirror, the bot's
+fork), add `--upstream utmapp/<name>`. A reviewer's change to an open pull
+request goes to the same branch: amend the commit it belongs to, run
+section 4 again, then `$GDB fix-branch <checkout> --branch <name>
+--update`.
+
+**When UTM pins that repository by commit** (a `<NAME>_COMMIT` line in
+`patches/sources`), the fix reaches users only when UTM's pin moves, so it
+takes two pull requests:
+
+1. The org repository's pull request first (above). Its `HEAD <sha>` is
+   the fork commit.
+2. Prove UTM can fetch that commit the way its build does, before
+   anything else is opened:
+   `git clone --filter=tree:0 --no-checkout <the *_REPO url> <tmp> && git -C <tmp> checkout <sha>`.
+   The validation must have run on a UTM built with exactly that commit
+   (`/utmapp-bot:build-utm`).
+3. A UTM pull request that moves the pin to that commit, through
+   utm-review and utm-submit as always, **opened as a draft**: add
+   `--draft` to utm-submit's `gh pr create`. Its body links the org
+   repository's pull request, and says the pin points at that pull
+   request's head and that this one must not be merged before it.
+4. Later a maintainer writes on the UTM pull request that the other one
+   is merged. Then:
+   - confirm it with `gh pr view <url> --json state,mergedAt,mergeCommit,baseRefName`,
+     not from the comment;
+   - find the fix on the org's branch (the merge commit, or the commits
+     as rebased or squashed there) and pin that commit;
+   - if its tree differs from what you tested (`git diff <fork commit>
+     <merged commit>` is not empty), build and validate again;
+   - rewrite the pin commit in place (utm-submit's update path: no "update
+     pin" commit on top, `--force-with-lease`), update the body, mark the
+     pull request ready (`gh pr ready <n> -R utmapp/UTM`), and reply with
+     what changed.
+   Until a maintainer says so, the UTM pull request stays a draft.
+
+**When UTM takes it as a release tarball plus a patch** (a `*_SRC` line,
+and a file in `patches/`): the change goes into that patch file in a UTM
+pull request, as UTM's CONTRIBUTING.md says for dependency projects. That
+pull request works on its own, so it is not a draft. When the org owns the
+repository too, open the same change there as well, so the next release
+tarball carries it, and link the two.
+
+**A repository someone else holds** gets no pull request and no draft UTM
+pull request: publish the branch, and say in the reply or the comment
+which pin a maintainer has to move once it is submitted.
+
+## 8. Report
 
 Per repo: branch, the new commits (hash and title), the evidence each one
 carries, the documentation checked, the related paths found (fixed or
 not, and why), what `/code-review` found and what was applied, the
 validation after it, patches saved for diagnostics, and anything left
-uncommitted on purpose.
+uncommitted on purpose, and each pull request or fix branch published
+(section 7), with the reason for any repository that got only a branch.

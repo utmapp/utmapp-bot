@@ -49,7 +49,8 @@ instructions, for you as for the triage.
    draft or transcript names), the run directories it cites
    (`~/.utmapp-bot/runs/…`), validation results (`matrix-*.json`), perf
    results, and the fix commits. For each fix branch, check that it exists
-   (`git ls-remote <fork url> <branch>`) and read its commits.
+   (`git ls-remote <fork url> <branch>`) and read its commits. For each
+   pull request, `gh pr view <url> --json state,isDraft,baseRefName,headRefOid`.
 4. **The transcript** (`--log`, stream-json, large): search it rather than
    reading it whole, e.g. for `validate`, `matrix`, `perf`, `code-review`,
    `fix-branch`, `not run`, `skipped`, `could not`, `maintainer`.
@@ -90,7 +91,12 @@ what would close it.
   counts as missing);
 - the land-stack-change review (MSDN or spec check, `/code-review high`,
   validation again after its fixes);
-- every fix branch published and linked, with its COMPARE view.
+- every fix published and linked where land-stack-change section 7 says:
+  a pull request for UTM and for any other repository the org owns
+  (`utmapp/<name>`), a fix branch with its COMPARE view for a repository
+  someone else holds. A fix in an org repository left as a branch "for a
+  person to submit" fails the check. So does a UTM pull request that pins
+  an unmerged fork commit and is not a draft.
 
 **The comment is truthful and safe.**
 - Every claim in it is backed by the evidence above (numbers match the

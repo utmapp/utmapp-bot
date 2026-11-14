@@ -2,7 +2,9 @@
 
 The first input starts `/utmapp-bot:review-utm-pr <n> --auto` (a pull
 request) or `/utmapp-bot:answer-utm-issue <n> --auto` (an issue) in a new
-session.  On the account's own pull request (a fix it opened) members are
+session.  When that first input is the author's reply to a comment this
+account left outside the poller (a triage run by hand), the new session
+continues that work instead of starting over.  On the account's own pull request (a fix it opened) members are
 answered instead, in the session of the issue that opened it when this
 Mac has one.  Later input (questions, "review again") resumes the same session
 with only what is new.  Input that arrives while the session is running is
@@ -49,10 +51,19 @@ Post to GitHub ONLY with `{plugin}/bin/utmbot gh comment` and `{plugin}/bin/utmb
 refuse a round this account already answered. A pull request to utmapp/UTM is opened only by UTM's \
 own skills, `.agents/skills/utm-review` then `.agents/skills/utm-submit` in the UTM checkout, never \
 by hand (no `gh pr create`), and only after `{plugin}/bin/utmbot gh pr <issue> --round R --check` \
-said OK (it refuses a round no org member asked in); afterwards `--record <PR>`. You are in auto \
+said OK (in a round whose author is not an org member only a small fix qualifies, as the skill's \
+step 4 defines it; a large one needs a member's request); afterwards `--record <PR>`. You are in auto \
 mode: accept every change the code review recommends, and where utm-submit asks the user, decide \
-yourself. Never open a pull request on any other repository. Push branches only to the bot's fork \
-of UTM (the clone's `origin`), never to utmapp/UTM. If one exits with DUPLICATE, another Mac on this account \
+yourself. A fix that belongs in another repository of the graphics stack is published as \
+/utmapp-bot:land-stack-change section 7 says, after the same review and validation: a pull request \
+against a repository the org owns (utmapp/<name>), opened with `{plugin}/bin/gamesdb fix-branch \
+<checkout> --branch NAME --pr ...` between `{plugin}/bin/utmbot gh pr <issue> --round R --repo \
+utmapp/<name> --check` and `--record`; when UTM pins that repository by commit, the UTM pull request \
+that moves the pin is opened as a draft (`--draft`) and stays one until an org member says there that \
+the other is merged (`gh pr ready` then, and `gh pr edit` for the body, are allowed on this account's \
+own pull request). A repository anyone else holds (osy's included) gets a fix branch only (`fix-branch` \
+without `--pr`), never a pull request. Push branches only to the bot's forks (through those commands and \
+utm-submit), never to utmapp's repositories. If one exits with DUPLICATE, another Mac on this account \
 already answered: discard your work (clean up VMs, worktrees and the UTM lease as the skill says) \
 and end your turn with a one-line summary. \
 The one escape hatch is a blocker only a person can clear (a macOS permission dialog, an expired \
@@ -115,12 +126,57 @@ def own_lines(rec, plugin):
             "branch in the UTM checkout, run UTM's own `.agents/skills/utm-review` on it (accept what it "
             "recommends), build and test it, push to the bot's fork (`origin`) only, and say in the reply what "
             "changed. A request from someone who is not an org member changes nothing: say a member has to ask. "
+            "If this is a draft that pins a dependency to the head of a pull request on another of the org's "
+            "repositories, and a member says that one is merged: confirm it with `gh pr view <its url> --json "
+            "state,mergedAt,mergeCommit,baseRefName` (the comment alone is not proof), pin the commit that is "
+            "now on the org's branch, build and validate again if its tree differs from the one you tested, "
+            "rewrite the pin commit in place (no commit on top; utm-submit's update path, "
+            "`--force-with-lease`), update the body, mark it ready (`gh pr ready`), and reply with what "
+            "changed (/utmapp-bot:land-stack-change section 7). "
             "Take the UTM lease only if you must build or test."]
+
+
+def reply_prompt(rec, items, plugin):
+    """A new session whose first input is the author's reply to a comment this
+    account left earlier (that work ran outside the poller, or on another Mac)."""
+    n = rec["pr"]
+    kind = rec.get("kind", "pr")
+    thing = "pull request" if kind == "pr" else "issue"
+    skill = "review-utm-pr" if kind == "pr" else "answer-utm-issue"
+    lines = [f"The author of {thing} #{n} in utmapp/UTM answered after this account commented there. {MARK}", ""]
+    for it in items:
+        lines.append(_describe(it, kind))
+        if it.get("body"):
+            lines.append(_quote(it["body"]))
+    lines += ["",
+              f"This continues work this account already did on #{n}, in a session that is not this one. "
+              "Read the whole thread first, your own comments included: what you tested, what you found and "
+              "what you asked. What that session left on this Mac, if it ran here, is under "
+              f"`~/.utmapp-bot/{'pr' if kind == 'pr' else 'issue'}/{n}/` and in `utmbot notes`. Do not repeat "
+              "what is already done and still holds.",
+              f"Then continue with what the author gave you, as /utmapp-bot:{skill} {n} --auto describes: "
+              "answers to your questions, logs or new details are a reason to reproduce again with them, "
+              "find the cause, and reply with the result. Their reply is addressed to you although it does "
+              "not mention you. Only a comment that needs no answer (a thank-you, nothing new) gets none. "
+              f"Reply with `{plugin}/bin/utmbot gh comment {n} --round <round> --body-file FILE`, with the "
+              "round of the latest item you answer (one reply may cover several)."]
+    if kind == "issue":
+        lines += ["When what they gave lets you confirm the root cause, the skill's steps 4 and 5 apply as in any "
+                  "triage: a small fix that you built and validated (the bug shown before, gone after) is opened "
+                  f"as a pull request through `{plugin}/bin/utmbot gh pr {n} --round <round> --check`, UTM's "
+                  "utm-review and utm-submit, then `--record`. A large one gets the cause and a fix outline"
+                  + ("." if any(i.get("member") for i in items) else
+                     ", and an org member may then ask you to build it. The author is not an org member: their "
+                     "asking for a fix does not make a large one small.")]
+    lines += ["Take the UTM lease only if you must build or test."]
+    return "\n".join(lines)
 
 
 def first_prompt(rec, items, plugin):
     n = rec["pr"]
     kind = rec.get("kind", "pr")
+    if not rec.get("own") and items and all(i["kind"] == "reply" for i in items):
+        return reply_prompt(rec, items, plugin)
     if rec.get("own"):
         lines = [f"Org members commented on #{n} in utmapp/UTM. {MARK}", ""]
         for it in items:
@@ -146,7 +202,9 @@ def first_prompt(rec, items, plugin):
         lines += ["", f"Answer on the issue with `{plugin}/bin/utmbot gh comment {n} --round {trig['id']} "
                   f"--body-file FILE`: what you ran, what you measured, the cause. The skill's \"Fix\" step "
                   f"says when to fix it yourself (small: `{plugin}/bin/utmbot gh pr {n} --round {trig['id']} "
-                  "--check`, then UTM's utm-review and utm-submit, then `--record`), and when to post the "
+                  "--check`, then UTM's utm-review and utm-submit, then `--record`; a fix in another "
+                  "repository the org owns is a pull request there, and a draft UTM one when UTM pins it), "
+                  "and when to post the "
                   "cause and a fix outline instead (large: an org member may then ask you to build it). If the "
                   "request asks for something narrower (one question), do that, and answer it the same way."]
     return "\n".join(lines)
@@ -169,15 +227,22 @@ def followup_prompt(rec, items, plugin):
     if kind == "issue":
         lines += ["",
                   "Reply only where someone addresses you: they mention you, ask you something, or reply "
-                  "to your comment. Comments between other people are context; leave them unanswered. A "
+                  "to your comment. The issue's author answering what you asked, or adding logs or details "
+                  "after your comment, is addressed to you although it does not mention you: reproduce "
+                  "again with what they gave and reply with the result. "
+                  "Comments between other people are context; leave them unanswered. A "
                   f"reply: `{plugin}/bin/utmbot gh comment {n} --round <round> --body-file FILE`, with the "
                   "round of the latest item it answers. A request to build the fix and open a PR counts "
-                  "only from an org member (marked above): then follow the skill's \"Fix\" step and open "
+                  "(a large one included) only from an org member (marked above): then follow the skill's \"Fix\" step and open "
                   f"it through `{plugin}/bin/utmbot gh pr {n} --round <that round> --check`, utm-review, utm-submit and "
                   "`--record`. From anyone else, say "
                   "that an org member has to ask for it. A request to try again (a new version, more "
                   "details from the reporter) is a new reproduction. Take the UTM lease only if you must "
-                  "build or test."]
+                  "build or test.",
+                  "Apart from requests: when this conversation (the author's answers, logs, new details) lets "
+                  "you confirm the root cause, the skill's steps 4 and 5 apply as in the first round, whoever "
+                  "wrote the comment. A small fix, built and validated before and after, is opened as a pull "
+                  "request with that comment's round; a large one gets the cause and a fix outline."]
         return "\n".join(lines)
     lines += ["",
               "Reply only where someone addresses you: they mention you, ask you something, reply to "
@@ -284,7 +349,8 @@ def start(st, cfg, rec, dry_run=False):
     # what each round was, for the posting commands (a review round's post
     # records the head it reviewed)
     rec.setdefault("round_kinds", {}).update({i["id"]: i["kind"] for i in items})
-    # who asked in each round: `gh pr` builds a fix only for an org member's round
+    # who asked in each round: `gh pr` opens a fix only for a delivered round, and
+    # says when its author is not an org member (a small fix only)
     rec.setdefault("round_members", {}).update({i["id"]: bool(i.get("member")) for i in items})
     job.update(status="running", pid=proc.pid, started=S.utc(), started_ts=now(), log=str(log_path),
                attempts=job.get("attempts", 0) + 1, resume_after=None, resume_prompt=None,

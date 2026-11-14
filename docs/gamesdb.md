@@ -203,7 +203,7 @@ The triage pipeline (the site's `/triage` page) and its statuses:
 | `needs_clarification` | the reported symptom did not reproduce on the release stack (release UTM, released driver by date), and a comment asks the reporter for something specific |
 | `cannot_reproduce` | not reproduced and nothing more to ask |
 | `wont_fix` | reproduced, but outside what UTM controls (a hardware limit, a known architectural issue), or already fixed: reproduced on release, not on the current stack (the comment names the build that fixes it) |
-| `fix_proposed` | a validated fix is on a branch of the bot's GitHub fork (`$GDB fix-branch`), and the comment links it. Triage opens no pull request except through UTM's own utm-review and utm-submit, for a fix in UTM itself; for every other repository a maintainer reviews and consolidates the branches and submits them |
+| `fix_proposed` | a validated fix is published from the bot's GitHub fork, and the comment links it: a pull request for UTM (only through UTM's own utm-review and utm-submit) and for any other repository the org owns (`$GDB fix-branch --pr`; a draft UTM pull request moves the pin when UTM pins that repository by commit), and a branch only (`$GDB fix-branch`) for a repository someone else holds, which a maintainer reviews, consolidates and submits |
 
 The four finishing statuses (`needs_clarification`, `cannot_reproduce`,
 `wont_fix`, `fix_proposed`) go out with their comment through `$GDB final

@@ -49,10 +49,14 @@ Reports and the triage agent:
                                  evidence; publishes without another check
   verdict pass|fail [--reasons TEXT|@FILE]
                                  the result check's verdict (db-triage-check sessions only)
-  fix-branch REPO --branch NAME [--ref REF] [--dry-run]
+  fix-branch REPO --branch NAME [--ref REF] [--upstream OWNER/NAME] [--dry-run]
+             [--pr --title T --body-file F [--base B] | --update]
                                  publish a validated fix as a new branch on the bot's GitHub
-                                 fork (never a pull request); fix-branch --whoami: the gh
-                                 login, or an error
+                                 fork; --pr also opens a pull request from it against a
+                                 repository the org owns (never UTM: utm-submit does that; never
+                                 anyone else's repository); --update pushes a reviewer's change to
+                                 the branch of this account's open pull request; fix-branch
+                                 --whoami: the gh login, or an error
   visibility report|comment ID visible|hidden|removed
 
 Moderation:
@@ -602,6 +606,8 @@ def parser():
     s = cmd("fix-branch")
     s.add_argument("repo", nargs="?"); s.add_argument("--branch"); s.add_argument("--ref", default="HEAD")
     s.add_argument("--dry-run", action="store_true"); s.add_argument("--whoami", action="store_true")
+    s.add_argument("--pr", action="store_true"); s.add_argument("--title"); s.add_argument("--body-file")
+    s.add_argument("--base"); s.add_argument("--update", action="store_true"); s.add_argument("--upstream")
     s = cmd("visibility", "kind", choices=["report", "comment"])
     s.add_argument("id", type=int); s.add_argument("value", choices=["visible", "hidden", "removed"])
 

@@ -3,7 +3,11 @@ record per number: GitHub numbers both from one counter).
 
 Who may talk to the bot: members of the org (GHBOT_ORG).  The pull
 request's author may too, but only once a member has started the
-conversation (initiated_by).  Everyone else, and every bot account, is
+conversation (initiated_by).  The author of an issue or pull request is
+also answered, mention or not, once this account has commented there (a
+"reply": the bot asked something and they answered), whoever started that
+work: a triage run by hand leaves no record here, so GitHub's own thread
+is what counts (spoke_before).  Everyone else, and every bot account, is
 ignored without a reply.
 
 The account's own pull requests (a fix utm-submit opened) are never
@@ -76,6 +80,20 @@ class Poller:
         text = re.sub(r"`[^`\n]*`", "", text)
         text = "\n".join(l for l in text.splitlines() if not l.lstrip().startswith(">"))
         return re.search(rf"(?<![\w/@-])@{re.escape(self.login())}\b(?!-)", text, re.I) is not None
+
+    def spoke_before(self, n, at, rec=None):
+        """Did this account comment on #n before `at`?  From GitHub, not from
+        this Mac's records: a triage run by hand, or by another Mac, leaves
+        none here.  The earliest such comment is kept in the record."""
+        first = (rec or {}).get("spoke_at")
+        if first is None:
+            me = self.login().lower()
+            mine = [c["created_at"] for c in self.gh.paged(f"/repos/{self.repo}/issues/{n}/comments")
+                    if (c.get("user") or {}).get("login", "").lower() == me]
+            first = min(mine) if mine else ""
+            if rec is not None and first:
+                rec["spoke_at"] = first
+        return bool(first) and first < at
 
     # ---- the claim ------------------------------------------------------------------
 
@@ -230,9 +248,16 @@ class Poller:
                     inputs.append(it)
                 continue
             it["mentions"] = self.mentions_me(it["body"])
-            if not (member or (who.lower() == author and started)):
+            # the author answering after this account commented (it asked them
+            # something): for the bot, whoever started that work
+            # (a member's mention still calls the bot the usual way)
+            reply = (who.lower() == author and not own and not started and not (member and it["mentions"])
+                     and it["type"] != "description" and self.spoke_before(n, it["at"], rec))
+            if not (member or reply or (who.lower() == author and started)):
                 continue  # may not talk to the bot: no reply
-            if not started and (it["mentions"] or (own and member)):
+            if reply:
+                it["kind"] = "reply"
+            elif not started and (it["mentions"] or (own and member)):
                 it["kind"] = first  # on its own PR any member's comment is for the bot
             elif started:
                 it["kind"] = "followup"
@@ -262,7 +287,8 @@ class Poller:
             rec.update(owner="mine", reaction_id=rid, claimed=S.utc())
             S.log(f"#{n}: claimed (👀 {rid})")
         if not rec.get("initiated_by"):
-            rec["initiated_by"] = next(i["author"] for i in inputs if i["kind"] in ("review", "answer"))
+            # a reply starts nothing: the author stays limited to replies
+            rec["initiated_by"] = next((i["author"] for i in inputs if i["kind"] in ("review", "answer")), None)
         if own and not rec.get("session_id"):
             origin = next((r for r in S.pr_all() if int(n) in (r.get("opened_prs") or []) and r.get("session_id")),
                           None)
@@ -271,7 +297,7 @@ class Poller:
                 rec.update(session_id=origin["session_id"], origin=origin["pr"])
                 S.log(f"#{n}: answered in issue #{origin['pr']}'s session {origin['session_id']}")
         for it in inputs:
-            if it.get("mentions") or it["kind"] in ("review", "answer"):
+            if it.get("mentions") or it["kind"] in ("review", "answer", "reply"):
                 self.ack(it)
             it.pop("assoc", None)
             it["body"] = it["body"][:20000]
@@ -320,6 +346,29 @@ class Poller:
         # cursor is not lost (PR cursors make a second look harmless)
         st["since"] = S.utc(max(_ts(newest) - 60, _ts(since)))
         return sorted(nums)
+
+    def unanswered(self):
+        """Threads this Mac has seen where the author wrote after this
+        account's last comment and nothing took it up (replies dropped
+        before replies counted, or while the poller was down):
+        [(record, the bot's last comment time, [the author's comments])]."""
+        me = self.login().lower()
+        out = []
+        for rec in S.pr_all():
+            if rec.get("own") or rec.get("owner") or rec.get("session_id") or rec.get("state") == "closed" \
+                    or rec.get("pending") or (rec.get("job") or {}).get("status") not in ("idle", None):
+                continue
+            cs = self.gh.paged(f"/repos/{self.repo}/issues/{rec['pr']}/comments")
+            mine = [c["created_at"] for c in cs if (c.get("user") or {}).get("login", "").lower() == me]
+            if not mine:
+                continue
+            last = max(mine)
+            author = (rec.get("author") or "").lower()
+            late = [c for c in cs if c["created_at"] > last and (c.get("user") or {}).get("login", "").lower() == author
+                    and author != me]
+            if late:
+                out.append((rec, last, late))
+        return out
 
     def sweep(self):
         """Every PR this Mac owns or saw owned elsewhere: is the 👀 still

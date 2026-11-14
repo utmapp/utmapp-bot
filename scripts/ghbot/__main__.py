@@ -12,6 +12,9 @@ The poller (a LaunchAgent github-setup installs; no games-db needed):
   setup [--paused] [--check] [--uninstall]   see skills/github-setup
   pause | resume            stop starting sessions (running ones go on) / start again
   retry PR                  resume a failed or blocked PR's session at the next round
+  catchup [--apply]         list the issues and PRs this Mac has seen where the author wrote
+                            after this account's last comment and nothing took it up;
+                            --apply queues them (each gets a session and a public reply)
   release PR [--force]      delete this account's 👀 on PR (whichever Mac set it): the
                             PR is free for any Mac; --force also when this Mac runs it
 
@@ -23,11 +26,14 @@ For sessions the poller started (a person may use them too):
   review PR --round R --event approve|request-changes|comment --body-file F
                             submit a review on the PR's head, refused (DUPLICATE) the same
                             way, and when this account already reviewed that head
-  pr ISSUE --round R --check | --record PR
-                            around UTM's own utm-submit, which opens a fix's PR (this never
-                            does): --check refuses a round no org member asked in and one this
-                            account already answered (DUPLICATE), and prints the marker line
-                            for the PR body; --record notes the PR utm-submit opened
+  pr ISSUE --round R [--repo OWNER/NAME] --check | --record PR
+                            around whatever opens a fix's PR (this never does): UTM's own
+                            utm-submit, or, with --repo, `gamesdb fix-branch --pr` for another
+                            repository the org owns.  --check refuses a round the poller never
+                            delivered and one this account already answered there (DUPLICATE),
+                            says whether an org member asked (anyone else's round: a small
+                            fix only),
+                            and prints the marker line for the PR body; --record notes the PR
   session blocked --reason TEXT | later --reason TEXT [--hours H]
                             this session needs a person / wants to be resumed later
 
@@ -238,7 +244,14 @@ def cmd_comment(a):
     else:
         r = p.gh.request("POST", f"/repos/{R}/issues/{n}/comments", {"body": text})
     kind = ((rec or {}).get("round_kinds") or {}).get(a.round)
-    head = p.gh.get(f"/repos/{R}/pulls/{n}")["head"]["sha"] if kind == "review" else None
+    # a review round's post records the head it reviewed (a pull request only:
+    # an issue's first round is a "review" round too, and has no head)
+    head = None
+    if kind == "review" and (rec or {}).get("kind", "pr") == "pr":
+        try:
+            head = p.gh.get(f"/repos/{R}/pulls/{n}")["head"]["sha"]
+        except GitHubError as e:  # the comment is posted: record it whatever happens here
+            S.log(f"#{n}: could not read the head after posting: {e}")
     _record(n, a.round, r.data["id"], head)
     print(r.data.get("html_url"))
 
@@ -250,21 +263,38 @@ def cmd_pr(a):
     cfg = S.config()
     p = Poller(GitHub(), cfg)
     R, n, me = cfg["GHBOT_REPO"], a.issue, p.login()
+    other = bool(a.repo) and a.repo.lower() != R.lower()
+    if other:
+        # a fix in another repository of the stack: only one the org owns gets a PR
+        if not re.fullmatch(r"[A-Za-z0-9._-]+/[A-Za-z0-9._-]+", a.repo) or \
+                a.repo.split("/")[0].lower() != cfg["GHBOT_ORG"].lower():
+            die(f"{a.repo} is not a repository of the {cfg['GHBOT_ORG']} org: a fix there is published as a "
+                "branch only (`gamesdb fix-branch`, no --pr)")
+        R = a.repo
     rec = S.pr_load(n) or {}
     tag = MARKER.format(a.round)
     if a.check:
         if os.environ.get("GHBOT_MODE") == "auto" or rec.get("round_members"):
-            # only an org member's round builds a fix (the poller recorded who asked)
-            if not (rec.get("round_members") or {}).get(a.round):
-                die(f"round {a.round} was not asked by an org member: only a member's request opens a PR "
-                    "(answer with `gh comment` that a member has to ask)")
+            # a round the poller delivered: an org member's, or the author's (their
+            # answer in a triage).  Only a member's request builds a large fix.
+            rm = rec.get("round_members") or {}
+            if a.round not in rm:
+                die(f"round {a.round} is not a round the poller delivered for #{n}: a PR answers one of those")
+            if not rm[a.round]:
+                print("NOTE: this round's author is not an org member. A fix found while answering them may "
+                      "be opened when it is small by the skill's rule (cause confirmed, fix built and "
+                      "validated before and after); a large fix, or a fix only because they ask for one, "
+                      "needs an org member's request.")
         mine = _ours(rec, a.round)
         for pr in p.gh.paged(f"/repos/{R}/pulls", {"state": "all"}, limit=300):
             if pr["user"]["login"].lower() == me.lower() and str(pr["number"]) not in mine \
+                    and f"{R}#{pr['number']}" not in mine \
                     and tag in (pr.get("body") or ""):
                 _duplicate(n, a.round, rec, f"{pr['html_url']} already answers round {a.round}")
-        print(f"OK: submit with UTM's utm-review, then utm-submit. Put this line at the end of the PR body:\n{tag}\n"
-              f"Then: utmbot gh pr {n} --round {a.round} --record <PR number or URL>")
+        how = (f"open it with `gamesdb fix-branch <checkout> --branch NAME --pr --title T --body-file F`"
+               if other else "submit with UTM's utm-review, then utm-submit")
+        print(f"OK: {how}. Put this line at the end of the PR body:\n{tag}\n"
+              f"Then: utmbot gh pr {n} --round {a.round}{' --repo ' + R if other else ''} --record <PR number or URL>")
         return 0
     num = int(re.search(r"(\d+)$", a.record.rstrip("/"))[1])
     pr = p.gh.get(f"/repos/{R}/pulls/{num}")
@@ -273,11 +303,13 @@ def cmd_pr(a):
     if tag not in (pr.get("body") or ""):
         print(f"WARNING: PR {num}'s body lacks {tag}: another Mac cannot see that it answers this round",
               file=sys.stderr)
-    _record(n, a.round, str(num))
+    _record(n, a.round, f"{R}#{num}" if other else str(num))
     with S.locked():
         cur = S.pr_load(n)
-        if cur is not None and num not in cur.setdefault("opened_prs", []):
-            cur["opened_prs"].append(num)
+        # opened_prs: UTM's, whose comments the poller brings back to this session
+        key, val = ("opened_elsewhere", f"{R}#{num}") if other else ("opened_prs", num)
+        if cur is not None and val not in cur.setdefault(key, []):
+            cur[key].append(val)
             S.pr_save(cur)
     print(pr.get("html_url"))
 
@@ -340,6 +372,32 @@ def cmd_release(a):
     print(f"PR {a.pr}: " + ("released (this account's 👀 removed)" if gone else "this account had no 👀 on it"))
 
 
+def cmd_catchup(a):
+    cfg = S.config()
+    p = Poller(GitHub(), cfg)
+    with S.locked("main"):
+        st = S.load()
+    found = p.unanswered()
+    for rec, last, late in found:
+        print(f"#{rec['pr']} ({rec.get('kind')}) {(rec.get('title') or '')[:60]}: @{rec.get('author')} wrote "
+              f"{len(late)} comment(s) after this account's of {last}: {late[-1]['html_url']}")
+        if a.apply:
+            with S.locked():
+                cur = S.pr_load(rec["pr"])
+                # read again from this account's last comment: only the author's
+                # comments after it qualify (as replies)
+                cur["cursor"] = last
+                S.pr_save(cur)
+            print(f"  {p.process(st, rec['pr'])}")
+    if not found:
+        print("nothing unanswered")
+    elif not a.apply:
+        print(f"{len(found)} unanswered; `utmbot gh catchup --apply` queues them (a session and a public reply each)")
+    else:
+        with S.locked("main"):
+            S.save(st)
+
+
 def cmd_retry(a):
     with S.locked():
         rec = S.pr_load(a.pr)
@@ -367,12 +425,14 @@ def main(argv):
     sub.add_parser("setup", help="see `utmbot gh setup --help`")
     sub.add_parser("pause"); sub.add_parser("resume")
     s = sub.add_parser("retry"); s.add_argument("pr", type=int)
+    s = sub.add_parser("catchup"); s.add_argument("--apply", action="store_true")
     s = sub.add_parser("release"); s.add_argument("pr", type=int); s.add_argument("--force", action="store_true")
     s = sub.add_parser("comment"); s.add_argument("pr", type=int); s.add_argument("--round", required=True)
     s.add_argument("--body-file", required=True); s.add_argument("--in-reply-to", type=int)
     s = sub.add_parser("review"); s.add_argument("pr", type=int); s.add_argument("--round", required=True)
     s.add_argument("--event", required=True, choices=sorted(EVENTS)); s.add_argument("--body-file", required=True)
     s = sub.add_parser("pr"); s.add_argument("issue", type=int); s.add_argument("--round", required=True)
+    s.add_argument("--repo", help="OWNER/NAME: another repository the org owns (default: GHBOT_REPO)")
     g = s.add_mutually_exclusive_group(required=True)
     g.add_argument("--check", action="store_true"); g.add_argument("--record", metavar="PR")
     s = sub.add_parser("session"); s.add_argument("action", choices=["blocked", "later"])
@@ -404,7 +464,7 @@ def main(argv):
             S.PAUSED.unlink(missing_ok=True)
             print("RESUMED")
             return 0
-        return {"retry": cmd_retry, "release": cmd_release, "comment": cmd_comment,
+        return {"catchup": cmd_catchup, "retry": cmd_retry, "release": cmd_release, "comment": cmd_comment,
                 "review": cmd_review, "pr": cmd_pr, "session": cmd_session}[a.cmd](a) or 0
     except GitHubError as e:
         die(str(e))

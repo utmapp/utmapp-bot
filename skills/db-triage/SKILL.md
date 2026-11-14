@@ -395,27 +395,44 @@ Then work it with the existing skills:
    required before publishing: the MSDN or Vulkan-spec check, fixing the
    related paths with the same bug, `/code-review high`, and validating
    again afterwards (step 4 once more). Then publish each repository's fix
-   as a branch on the bot's own fork, and never push to the upstream
-   project:
-   - **A fix in UTM itself** (utmapp/UTM) may be submitted as a pull
-     request, but only through UTM's own skills in the UTM checkout:
+   where land-stack-change section 7 says, from the bot's own fork, and
+   never push to the upstream repository itself:
+   - **A fix in UTM itself** (utmapp/UTM): a pull request, but only
+     through UTM's own skills in the UTM checkout:
      `.agents/skills/utm-review` (its code review and test requirements;
      in auto mode accept every change it recommends, then validate again),
      then `.agents/skills/utm-submit`. Never by hand (no `gh pr create`).
-     The Auto-Triage comment links the PR.
-   - **Every other repository** (the guest driver, virglrenderer, Mesa,
-     the backend shims, QEMU): **never open a pull request.** A person
-     reviews the branches, consolidates them, and submits them.
+   - **Any other repository the org owns** (`utmapp/<name>`:
+     virglrenderer, dxmt, d3dmetal-native, MoltenVK, qemu, …): a pull
+     request against it, with that repository's attribution rules:
 
-   ```sh
-   $GDB fix-branch <repo checkout> --branch triage/report-<id>-<short-name>
-   ```
+     ```sh
+     $GDB fix-branch <repo checkout> --branch triage/report-<id>-<short-name> \
+         --pr --title "<component: summary>" --body-file <file>
+     ```
 
-   It checks that `gh` is logged in as the bot account, forks the
-   repository's `origin` under that account if needed, and pushes the
-   commit as a new branch over HTTPS. It prints `FIX-BRANCH <url>` and
-   `COMPARE <url>`. It refuses a branch name that already exists: use a new
-   one (`…-v2`), never a force-push.
+     When UTM pins that repository by commit, also open the **draft** UTM
+     pull request that moves the pin to the fork commit (section 7 there:
+     prove the commit fetches first). It stays a draft until a maintainer
+     says on it that the other pull request is merged.
+   - **A repository someone else holds** (osy's guest driver, KMD and
+     Mesa trees; a third-party upstream): a fix branch only, no pull
+     request. A person reviews the branches, consolidates them, and
+     submits them.
+
+     ```sh
+     $GDB fix-branch <repo checkout> --branch triage/report-<id>-<short-name>
+     ```
+
+   `fix-branch` checks that `gh` is logged in as the bot account, forks
+   the repository's `origin` under that account if needed, and pushes the
+   commit as a new branch over HTTPS. It prints `FIX-BRANCH <url>`,
+   `COMPARE <url>`, `HEAD <sha>`, and with `--pr` `PR <url>`. It refuses
+   `--pr` for a repository the org does not own. It refuses a branch name
+   that already exists: use a new one (`…-v2`), never a force-push. The
+   one exception is `--update`, for a reviewer's change to this account's
+   own open pull request (land-stack-change section 7).
+   The Auto-Triage comment links every pull request and fix branch.
 
    If `gh` is not logged in, or its token is refused, `fix-branch` stops
    with an error. Interactive: tell the user to run `gh auth login` as the
@@ -445,13 +462,17 @@ verifies each item):
 6. `/utmapp-bot:perf-regression`: an interleaved A/B against the current
    stack, with the runs it asks for.
 7. `/utmapp-bot:land-stack-change`, its review step included, and each
-   repository's fix branch published.
+   repository's fix published: a pull request where the org owns the
+   repository (and the draft UTM pull request for a pinned commit), a fix
+   branch otherwise.
 
 Finish with one of:
-- `fix_proposed`: after the fix branches are published. The comment links
-  each `FIX-BRANCH` (and its `COMPARE` view; one per repository), with the
-  validation results, and says a maintainer will review it before anything
-  is submitted. It lists **what is fixed**: each reported symptom, and
+- `fix_proposed`: after every fix is published. The comment links each
+  pull request (`PR`), and each `FIX-BRANCH` with its `COMPARE` view for a
+  repository that gets only a branch (one per repository), with the
+  validation results. It says a maintainer reviews them before anything is
+  merged, and, for a draft UTM pull request, that it waits for the other
+  one to be merged. It lists **what is fixed**: each reported symptom, and
   which fix addresses it. A reported symptom left open is not
   `fix_proposed`. Keep working (above). Something you found on the way that
   the reporter did not report may stay open, if the comment says what was

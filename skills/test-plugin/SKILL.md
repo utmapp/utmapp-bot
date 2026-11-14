@@ -30,9 +30,11 @@ Run it from a checkout of this repository: the scripts below live in it
   `~/.utmapp-bot/gamesdb-local/.env`.
 - **Real:** the test and dev VMs, their snapshots, the UTM lease, the Steam
   account (licenses claimed and gifts accepted stay on it), CrossOver, and
-  GitHub (fix branches go to the bot's fork). Treat them as production:
-  a test that claims a license, pushes a branch or deletes a snapshot did
-  so for good.
+  GitHub (fix branches go to the bot's fork, and a fix in a repository
+  the org owns opens a real pull request there). Treat them as production:
+  a test that claims a license, pushes a branch, opens a pull request or
+  deletes a snapshot did so for good. Close a pull request a test opened,
+  with a comment that it came from a test.
 - The e2e dispatcher and the production one share the UTM lease, so they
   never drive a VM at the same time. Pause production work for a long test
   run with `bin/gamesdb dispatch pause` (and `resume` after), or let them
@@ -128,7 +130,7 @@ Seeded or queued by Claude, no person needed:
 |---|---|---|
 | Already fixed | a report of a bug that reproduces on the release stack and is fixed in the dev UTM or dev driver | `wont_fix`, the comment names the build that fixes it |
 | Not reproduced | a report of a symptom the released driver no longer has (an old guest tools version) | `needs_clarification`, asking for exactly what is missing (here: update the guest tools) |
-| A real bug to the end | a report standing in for a known open bug, worded as a player would (`e2e-scenario.sh fix-proposed setup` seeds one) | reproduced at the reporter's settings, CrossOver compared, the layer named only after attribute-to-layer, validate-stack and perf-regression ran, a branch `triage/report-<id>-…` on the bot's fork per repository and no pull request, `fix_proposed` with the links |
+| A real bug to the end | a report standing in for a known open bug, worded as a player would (`e2e-scenario.sh fix-proposed setup` seeds one) | reproduced at the reporter's settings, CrossOver compared, the layer named only after attribute-to-layer, validate-stack and perf-regression ran, a branch `triage/report-<id>-…` on the bot's fork per repository (the seeded bug is in osy's guest driver: no pull request; a fix that lands in an org repository opens one), `fix_proposed` with the links |
 | Clarification answered | `e2e-seed.py reply` on a report in `needs_clarification` | the **same** session resumes, uses the answer, comments |
 | No copy of the game | a report for a game the account does not own, no demo | a synthetic repro if the report pins down an API path, else db-summarize notes; either way the reporter gets a comment and the status goes back |
 | Attachments with personal data | the above with attachments full of names, paths, IPs, MACs, serials, Steam IDs, e-mail addresses | nothing personal in the comment, nothing says there were attachments. Made-up logs are recognised as made-up and rightly not summarized: test the summary itself with a real UTM debug log of a game, with the account and VM names changed and a configuration that matches the report |

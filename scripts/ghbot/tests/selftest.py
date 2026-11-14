@@ -214,7 +214,7 @@ class Mac:
                 return e.code, ""
 
 
-def open_pr(mac, n, rnd, branch="fix/x"):
+def open_pr(mac, n, rnd, branch="fix/x", repo=None):
     """--check, then what utm-submit does (a PR whose body ends with the
     marker), then --record; the exit code of the first step that stops."""
     with mac:
@@ -223,7 +223,7 @@ def open_pr(mac, n, rnd, branch="fix/x"):
         out = io.StringIO()
         try:
             with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
-                M.cmd_pr(SimpleNamespace(issue=n, round=rnd, check=True, record=None))
+                M.cmd_pr(SimpleNamespace(issue=n, round=rnd, check=True, record=None, repo=repo))
         except SystemExit as e:
             return e.code
         marker = out.getvalue().splitlines()[1]
@@ -234,7 +234,7 @@ def open_pr(mac, n, rnd, branch="fix/x"):
         mac.world.prs[num] = dict(mac.world.opened[-1])
         try:
             with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-                M.cmd_pr(SimpleNamespace(issue=n, round=rnd, check=False, record=str(num)))
+                M.cmd_pr(SimpleNamespace(issue=n, round=rnd, check=False, record=str(num), repo=repo))
         except SystemExit as e:
             return e.code
         return 0
@@ -421,7 +421,7 @@ def main():
           and "utm-submit" in args and "accept every change the code review recommends" in args,
           "an issue session runs answer-utm-issue, and opens a PR only through utm-review and utm-submit")
     rounds = {i["author"]: i["id"] for i in r10["pending"]}
-    check(open_pr(a, 10, rounds["reporter"]) not in (0, None), "the author's request cannot open a PR (not a member's round)")
+    check(open_pr(a, 10, "c999999") not in (0, None) and not w.opened, "a round the poller never delivered cannot open a PR")
     check(open_pr(a, 10, rounds["osy"]) in (0, None) and len(w.opened) == 1, "a member's round opens the PR")
     check(a.rec(10).get("opened_prs"), "the PR utm-submit opened is recorded")
     rec_b = dict(a.rec(10), rounds={}, owner="mine")
@@ -429,6 +429,16 @@ def main():
         S.pr_save(rec_b)  # Mac B won the same race
     check(open_pr(b, 10, rounds["osy"], "fix/y") == 3 and len(w.opened) == 1,
           "the same round from a second Mac is DUPLICATE: one PR")
+
+    # a fix in another repository of the stack: a PR only where the org owns it
+    check(open_pr(a, 10, rounds["osy"], "fix/v", repo="osy/virtio-win-mesa") not in (0, None),
+          "a repository the org does not own gets no PR (a fix branch only)")
+    check(open_pr(a, 10, "c999999", "fix/v", repo="utmapp/virglrenderer") not in (0, None),
+          "an undelivered round opens nothing on the org's other repositories either")
+    check(open_pr(a, 10, rounds["osy"], "fix/v", repo="utmapp/virglrenderer") in (0, None)
+          and a.rec(10).get("opened_elsewhere", [None])[0].startswith("utmapp/virglrenderer#")
+          and len(a.rec(10)["opened_prs"]) == 1,
+          "a member's round opens a PR on the org's repository, recorded apart from UTM's")
 
     # the account's own PR (the fix it opened for issue 10): members are answered without a
     # mention, in issue 10's session, never reviewed; everyone else is ignored
@@ -481,6 +491,80 @@ def main():
     last = (Path(root) / "claude.args").read_text().split("=====RUN=====")[-2]
     check("--session-id" in last and "own pull request" in last and "/utmapp-bot:review-utm-pr" not in last,
           "its first prompt answers the comment and does not start a review")
+
+    # a triage run outside the poller (no record here): this account commented, and the
+    # issue's author answers without a mention
+    w.issue(40, "reporter2", "it does not boot", at=60)
+    w.comment(40, "reporter2", "still happens on 5.0.8", 61)
+    a.poll()
+    check(not a.rec(40).get("owner"), "the author's comment before the bot ever spoke is not for the bot")
+    w.comment(40, BOT, "I could not reproduce this. Which macOS version? Please attach the log.", 62)
+    w.comment(40, "randomuser", "same here", 63)
+    out = a.poll()
+    check("nothing" in out[40] and not a.rec(40).get("owner"), "a stranger's comment after the bot's is still ignored")
+    w.comment(40, "reporter2", "macOS 26.1, the log is attached", 64)
+    a.poll()
+    r40 = a.rec(40)
+    check(r40.get("owner") == "mine" and [(i["kind"], i["author"]) for i in r40.get("pending", [])] == [("reply", "reporter2")]
+          and not r40.get("initiated_by"),
+          "the author's answer after the bot's comment is queued as a reply: no mention, no member, no record needed")
+    w.comment(40, "reporter2", "one more detail: it is an external disk", 65)
+    a.poll()
+    check([i["kind"] for i in a.rec(40)["pending"]] == ["reply", "reply"], "their next comment is a reply too")
+    with a:
+        st = S.load()
+        for r in S.pr_all():
+            if r["pr"] != 40 and r["job"].get("status") in ("running", "queued", "waiting"):
+                r["job"]["status"] = "idle"; S.pr_save(r)
+        jobs.schedule(st, a.cfg)
+        S.save(st)
+    time.sleep(1.5)
+    last = (Path(root) / "claude.args").read_text().split("=====RUN=====")[-2]
+    check("--session-id" in last and "continues work this account already did" in last and "external disk" in last
+          and "answer-utm-issue 40 --auto" in last and not last.lstrip().startswith("-p /utmapp-bot:"),
+          "the reply starts a session that continues the earlier triage instead of starting over")
+    rnd40 = a.rec(40)["delivered"][-1]
+    before = len(w.opened)
+    check(open_pr(a, 40, rnd40) in (0, None) and len(w.opened) == before + 1 and a.rec(40).get("opened_prs"),
+          "a fix found from the author's reply opens a PR in that round (the small-fix rule is the skill's)")
+    code, _ = a.post(40, rnd40, "reproduced with an external disk")
+    check(code in (0, None) and a.rec(40)["rounds"].get(rnd40), "the reply is posted and recorded")
+    code, _ = a.post(10, a.rec(10)["delivered"][0], "the first answer on an issue")
+    check(code in (0, None) and a.rec(10)["rounds"], "a first-round answer on an issue is recorded (an issue has no head)")
+
+    # an org member who is the author: a mention calls the bot as always; without one it is a reply
+    w.issue(42, "maint", "a member's own issue", at=66)
+    w.comment(42, BOT, "Which version?", 67)
+    w.comment(42, "maint", "5.0.8", 68)
+    a.poll()
+    r42 = a.rec(42)
+    check([(i["kind"], i["member"]) for i in r42["pending"]] == [("reply", True)],
+          "a member author's answer is a reply too, in a member's round")
+    w.issue(43, "maint", "another", at=66)
+    w.comment(43, BOT, "Which version?", 67)
+    w.comment(43, "maint", "@UTMapp-bot 5.0.8, please fix it", 68)
+    a.poll()
+    r43 = a.rec(43)
+    check(r43["pending"][0]["kind"] == "review" and r43.get("initiated_by") == "maint",
+          "a member author's mention still calls the bot the usual way")
+
+    # catch-up: a reply the cursor already passed (dropped before replies counted)
+    w.issue(41, "reporter3", "black screen", at=70)
+    w.comment(41, BOT, "Which display card?", 71)
+    w.comment(41, "reporter3", "virtio-gpu-gl-pci", 72)
+    with a:
+        r = Poller(FakeGH(w), a.cfg).new_record(41, ts(73))
+        r.update(kind="issue", author="reporter3", title="Issue 41", state="open", own=False)
+        S.pr_save(r)
+        w.notified.discard(41)
+        p = Poller(FakeGH(w), a.cfg)
+        found = p.unanswered()
+        check([f[0]["pr"] for f in found] == [41], "catch-up finds the thread whose author wrote after the bot's last comment")
+        M.GitHub = lambda: FakeGH(w)
+        M.S.config = lambda: a.cfg
+        with contextlib.redirect_stdout(io.StringIO()):
+            M.cmd_catchup(SimpleNamespace(apply=True))
+        check([i["kind"] for i in S.pr_load(41).get("pending", [])] == ["reply"], "catchup --apply queues it as a reply")
 
     print(f"\n{'ALL PASSED' if not FAILS else f'{len(FAILS)} FAILED'} ({root})")
     return 1 if FAILS else 0

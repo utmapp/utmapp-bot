@@ -162,7 +162,7 @@ fix-proposed)
             --issue graphics --backend dxmt --desc "Synthetic E2E report (stands in for osy/kvm-guest-drivers-windows#8, the comment of 2026-10-23): with two D3D11 devices sharing an ID3D11Fence, work queued after ID3D11DeviceContext4::Wait runs before the fence is signalled. Expected: a query issued after the Wait stays pending until the other device signals; got: GetData(DONOTFLUSH) returns S_OK at once and all 4096 pixels already hold the new clear colour ff336699 while the fence still reads 0." \
             --repro "Two devices on the VirtIO adapter, a shared fence (D3D11_FENCE_FLAG_SHARED), device A: Wait(fence, 1), then ClearRenderTargetView + query; device B signals 1 only after 2 s. It shows in the game as stutter and flashes of the next frame during loading screens." --status pending)"
         say "$out"
-        say "the dispatcher triages it: expect a probe, attribution, a fix, validation and a fix branch on the bot's fork (fix_proposed, no pull request)"
+        say "the dispatcher triages it: expect a probe, attribution, a fix, validation and a fix branch on the bot's fork (fix_proposed; the guest driver is osy's, so no pull request)"
         ;;
     *) die "fix-proposed setup" ;;
     esac ;;
