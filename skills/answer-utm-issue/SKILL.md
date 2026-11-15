@@ -1,6 +1,6 @@
 ---
 name: answer-utm-issue
-description: Answer a utmapp/UTM GitHub issue of any kind — read it, reproduce it on the configuration the reporter ran (graphics through repro-gpu-issue, the app's UI on macOS VMs and iOS simulators, VM behaviour in a matching VM), find the cause in UTM's code or in the layer of the graphics stack that owns it, then either fix it (small: built and tested before and after, then submitted only through UTM's own utm-review and utm-submit; a fix in another repository the org owns is opened as a pull request there, with a draft UTM pull request when UTM pins it by commit) or describe the cause and a fix outline (large: an org member may then ask for the fix), and reply on the issue with the results. With --new (the poller, for an issue nobody asked about) it first sorts the issue: ignores one whose template form was left unfilled or filled with garbage, closes a blank one with too little to go on (asking for a template), closes a duplicate with GitHub's own link, asks for details when it is too vague ("needs info"), labels a problem outside UTM's control "external" and leaves it open, labels a feature request "enhancement", leaves alone what cannot be triaged here, and triages the rest ("not reproducible" when it does not reproduce). Use when given a UTM issue number or URL and asked to answer, reproduce, look into or fix it, or when the GitHub poller starts it for an @-mention on an issue or for a new issue.
+description: Answer a utmapp/UTM GitHub issue of any kind — read it, reproduce it on the configuration the reporter ran (graphics through repro-gpu-issue, the app's UI on macOS VMs and iOS simulators, VM behaviour in a matching VM), find the cause in UTM's code or in the layer of the graphics stack that owns it, then either fix it (small: built and tested before and after, then submitted only through UTM's own utm-review and utm-submit; a fix in another repository the org owns is opened as a pull request there, with a draft UTM pull request when UTM pins it by commit) or describe the cause and a fix outline (large: an org member may then ask for the fix), and reply on the issue with the results. With --new (the poller, for an issue nobody asked about) it first sorts the issue: ignores one whose template form was left unfilled or filled with garbage, closes a blank one with too little to go on (asking for a template), closes a duplicate with GitHub's own link, asks for details when it is too vague ("needs info"), labels a problem outside UTM's control "external" and leaves it open, gives a bug report filed on the blank form the type Bug and leaves anything else filed blank alone, leaves alone what cannot be triaged here, and triages the rest ("not reproducible" when it does not reproduce). Use when given a UTM issue number or URL and asked to answer, reproduce, look into or fix it, or when the GitHub poller starts it for an @-mention on an issue or for a new issue.
 argument-hint: "<issue number or URL> [--auto] [--new]"
 ---
 
@@ -68,8 +68,24 @@ without the UTM lease: most outcomes need no VM. Read the issue (step 1's
 `gh issue view`), then go through these in order. Post only through the
 commands named here; they work on this issue alone.
 
-**0. Was a template used, and filled in?** The repository's bug and
-feature templates are forms with required fields. Read the forms as they
+**0. Its type, and its template.** The poller only starts this for an
+issue of type **Bug** (the bug templates set it) or with **no type** (the
+blank form). An issue of any other type, Feature included, never gets
+here and needs nothing. `gh issue view <n> -R utmapp/UTM --json
+issueType` shows it (or `gh api repos/utmapp/UTM/issues/<n> --jq
+.type.name`).
+
+- **No type:** it was opened blank. Decide whether it reports a bug
+  (something UTM does wrong, as opposed to a request, a question or a
+  discussion).
+  - **A bug report:** `$UB gh type <n> --bug`, then go on below as "no
+    form (opened blank)".
+  - **Not a bug report:** leave it alone completely. No type, no label,
+    no comment; end with a one-line summary. Feature requests are not
+    expected on the blank form, so do not set Feature either.
+- **Bug:** go on below.
+
+The repository's bug and feature templates are forms with required fields. Read the forms as they
 are today (`gh api repos/utmapp/UTM/contents/.github/ISSUE_TEMPLATE`, then
 each `.yml`): an issue made from one has the form's `### <label>`
 headings in its body.
@@ -119,9 +135,10 @@ the error text, the device or setting named).
   go on with the steps below. Fold this into the triage comment when one
   follows right away.
 
-**b. A feature or enhancement request?** (Something UTM does not do, not
-something it does wrong.) `$UB gh label <n> --add enhancement` if it does
-not have it, and stop. No comment, no triage.
+**b. Filed as a bug, but a request?** An issue of type Bug that asks for
+something UTM does not do, instead of reporting something it does wrong:
+leave it alone. No comment, no label, no change of type (a maintainer
+retypes it); end with a one-line summary.
 
 **c. Too vague to try, although the form was filled?** The required
 fields are there, but nothing to reproduce from, like "Windows will not

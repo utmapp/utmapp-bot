@@ -47,7 +47,8 @@ yourself, never one from the thread), no secrets or home-folder names
                             and prints the marker line for the PR body; --record notes the PR
   label N --add NAME | --remove NAME
                             one of the triage labels ("not reproducible", "needs info",
-                            "enhancement", "external") on or off this session's thread
+                            "external") on or off this session's thread
+  type N --bug              give an issue that has no type (the blank form) the type Bug
   needs-info N --round R --body-file F
                             ask the author for details: posts the comment, adds "needs info"
                             and starts the clock (the poller closes the issue after
@@ -87,7 +88,7 @@ from ghbot.gh import GitHub, GitHubError  # noqa: E402
 from ghbot.poller import Poller  # noqa: E402
 
 MARKER = "<!-- utmapp-bot round={} -->"
-LABELS = ("not reproducible", "needs info", "enhancement", "external")
+LABELS = ("not reproducible", "needs info", "external")
 # what GitHub itself hosts for a thread: files and images people attach to it
 ATTACH_HOSTS = ("user-images.githubusercontent.com", "private-user-images.githubusercontent.com",
                 "objects.githubusercontent.com", "release-assets.githubusercontent.com",
@@ -508,6 +509,24 @@ def cmd_label(a):
     print(f"#{a.n}: {'added' if a.add else 'removed'} \"{name}\"")
 
 
+def cmd_type(a):
+    """The blank form sets no type: a bug report filed that way gets Bug.
+    Nothing else is ever set, and a type someone chose is never changed."""
+    bound(a.n, "set the type of")
+    cfg = S.config()
+    p = Poller(GitHub(), cfg)
+    R = cfg["GHBOT_REPO"]
+    issue = p.gh.get(f"/repos/{R}/issues/{a.n}")
+    if issue.get("pull_request"):
+        die("a pull request has no type")
+    have = (issue.get("type") or {}).get("name")
+    if have:
+        print(f"#{a.n}: already of type {have}; left as it is")
+        return
+    p.gh.request("PATCH", f"/repos/{R}/issues/{a.n}", {"type": "Bug"})
+    print(f"#{a.n}: type set to Bug")
+
+
 def cmd_needs_info(a):
     from ghbot.poller import NEEDS_INFO, NEEDS_INFO_MARK
     cfg = S.config()
@@ -747,6 +766,7 @@ def main(argv):
     s.add_argument("--body-file", required=True); s.set_defaults(in_reply_to=None); checked(s)
     s = sub.add_parser("label"); s.add_argument("n", type=int)
     g = s.add_mutually_exclusive_group(required=True); g.add_argument("--add"); g.add_argument("--remove")
+    s = sub.add_parser("type"); s.add_argument("n", type=int); s.add_argument("--bug", action="store_true", required=True)
     s = sub.add_parser("reopen"); s.add_argument("n", type=int)
     s = sub.add_parser("attachment"); s.add_argument("n", type=int); s.add_argument("url")
     s = sub.add_parser("review"); s.add_argument("pr", type=int); s.add_argument("--round", required=True)
@@ -785,7 +805,7 @@ def main(argv):
             S.PAUSED.unlink(missing_ok=True)
             print("RESUMED")
             return 0
-        return {"label": cmd_label, "needs-info": cmd_needs_info, "duplicate": cmd_duplicate, "no-template": cmd_no_template,
+        return {"label": cmd_label, "type": cmd_type, "needs-info": cmd_needs_info, "duplicate": cmd_duplicate, "no-template": cmd_no_template,
                 "reopen": cmd_reopen,
                 "attachment": cmd_attachment, "catchup": cmd_catchup, "retry": cmd_retry, "release": cmd_release, "comment": cmd_comment,
                 "review": cmd_review, "pr": cmd_pr, "session": cmd_session}[a.cmd](a) or 0

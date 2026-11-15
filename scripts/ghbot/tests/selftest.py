@@ -111,7 +111,9 @@ class FakeGH:
         if parts[3] == "issues" and len(parts) == 4:
             return Response(200, {}, sorted((i for i in w.prs.values() if i.get("created_at")), key=lambda i: i["created_at"], reverse=True))
         if parts[3] == "issues" and len(parts) == 5:
-            if method == "PATCH":
+            if method == "PATCH" and "type" in body:
+                w.prs[n]["type"] = {"name": body["type"]}
+            elif method == "PATCH":
                 w.prs[n].update(state=body["state"], state_reason=body.get("state_reason"))
                 w.timeline.append({"pr": n, "id": w.nid(), "event": "closed" if body["state"] == "closed" else "reopened",
                                    "created_at": ts(0), "actor": w.user(BOT)})
@@ -644,9 +646,13 @@ def main():
     w.pr(55, BOT, "the bot's own PR", at=90)
     w.pr(56, "newuser", "work in progress", at=90); w.prs[56]["draft"] = True
     w.issue(57, "evil[bot]", "a bot's issue", at=90); w.prs[57]["user"]["type"] = "Bot"
+    w.issue(61, "newuser", "please add a dark icon", at=90); w.prs[61]["type"] = {"name": "Feature"}
+    w.issue(62, "newuser", "### What happened?\ncrash", at=90); w.prs[62]["type"] = {"name": "Bug"}
     w.notified.clear()
     out = new(a)
-    kinds = {n: [i["kind"] for i in a.rec(n).get("pending", [])] for n in range(50, 58)}
+    kinds = {n: [i["kind"] for i in a.rec(n).get("pending", [])] for n in list(range(50, 58)) + [61, 62]}
+    check(not kinds[61] and kinds[62] == ["triage"],
+          "an issue of type Feature is never taken up; one of type Bug (or with no type) is")
     check(kinds[51] == ["triage"] and kinds[52] == ["triage"], "a new issue is taken up unasked, a maintainer's too")
     check(kinds[53] == ["triage"], "so is a pull request by someone outside the org")
     check(not kinds[54] and not kinds[55] and not kinds[56] and not kinds[57] and not kinds[50],
@@ -690,7 +696,15 @@ def main():
     os.environ.update(GHBOT_MODE="auto", GHBOT_PR="51", GHBOT_SESSION=a.rec(51).get("session_id") or "x")
     bf = a.dir / "t.md"
     check(cli(a, M.cmd_label, n=52, add="needs info", remove=None) not in (0, None), "a session cannot label another thread")
-    check(cli(a, M.cmd_label, n=51, add="wontfix", remove=None) not in (0, None), "nor use a label outside the four")
+    check(cli(a, M.cmd_label, n=51, add="wontfix", remove=None) not in (0, None)
+          and cli(a, M.cmd_label, n=51, add="enhancement", remove=None) not in (0, None),
+          "nor use a label outside the three (\"enhancement\" is retired)")
+    check(cli(a, M.cmd_type, n=51, bug=True) == 0 and w.prs[51]["type"] == {"name": "Bug"},
+          "a bug report filed blank gets the type Bug")
+    w.prs[51]["type"] = {"name": "Task"}
+    check(cli(a, M.cmd_type, n=51, bug=True) == 0 and w.prs[51]["type"] == {"name": "Task"}
+          and cli(a, M.cmd_type, n=52, bug=True) not in (0, None),
+          "a type someone chose is never changed, and another thread's is out of reach")
     check(cli(a, M.cmd_label, n=51, add="not reproducible", remove=None) == 0
           and [l["name"] for l in w.prs[51]["labels"]] == ["not reproducible"], "it labels its own thread")
     check(cli(a, M.cmd_label, n=51, add="external", remove=None) == 0

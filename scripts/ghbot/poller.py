@@ -14,8 +14,10 @@ Unasked (GHBOT_AUTO, on by default): every issue and pull request opened
 after this was switched on is taken up as a "triage" round without anyone
 calling the bot (poll_new: new issues send this account no notification,
 so the issue list is read).  Not the account's own, not a pull request an
-org member opened, not a draft.  What the session then does (duplicate,
-needs info, enhancement, a reproduction, nothing at all) is the skills'
+org member opened, not a draft, and not an issue whose type is anything
+but Bug (the Feature template sets its type: nothing to do there; no type
+means the blank form, and the session decides whether it is a bug).  What the session then does (duplicate,
+needs info, a reproduction, nothing at all) is the skills'
 business; its author is a stranger, so everything it may write to GitHub
 goes through `utmbot gh`'s thread-bound, checked commands.  On such a
 thread the author's and members' later comments are follow-ups.
@@ -253,6 +255,7 @@ class Poller:
         # (not the account's own, not a member's or a draft pull request)
         auto_new = (auto_on(self.cfg) and bool(st.get("auto_since")) and pr.get("created_at", "") > st["auto_since"]
                     and pr.get("state") == "open"
+                    and (kind == "pr" or ((pr.get("type") or {}).get("name") or "Bug") == "Bug")
                     and author != me and pr["user"].get("type") != "Bot" and not author.endswith("[bot]")
                     and not rec.get("auto_seen")
                     and not (kind == "pr" and (pr.get("draft") or self.is_member(st, pr["user"]["login"],

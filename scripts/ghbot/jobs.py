@@ -71,7 +71,7 @@ Post to GitHub ONLY with `{plugin}/bin/utmbot gh comment` and `{plugin}/bin/utmb
 round, refuse a round this account already answered, work only on this session's own thread, and \
 check what goes out (nothing that identifies this Mac, no links outside the reference list, no \
 secrets). Labels, asking for details, closing a duplicate and reopening go only through \
-`{plugin}/bin/utmbot gh label|needs-info|duplicate|no-template|reopen`, on this thread only. A pull request to utmapp/UTM is opened only by UTM's \
+`{plugin}/bin/utmbot gh label|type|needs-info|duplicate|no-template|reopen`, on this thread only. A pull request to utmapp/UTM is opened only by UTM's \
 own skills, `.agents/skills/utm-review` then `.agents/skills/utm-submit` in the UTM checkout, never \
 by hand (no `gh pr create`), and only after `{plugin}/bin/utmbot gh pr <issue> --round R --check` \
 said OK (in a round whose author is not an org member only a small fix qualifies, as the skill's \
@@ -223,7 +223,7 @@ def triage_prompt(rec, items, plugin):
               "is to leave it alone, post nothing at all and end with a one-line summary. Otherwise use only: "
               f"`{ub} comment {n} --round {rnd} --body-file F`, `{ub} duplicate {n} --of M --round {rnd} "
               f"--body-file F`, `{ub} needs-info {n} --round {rnd} --body-file F`, `{ub} no-template {n} --round {rnd} "
-              f"--body-file F`, `{ub} label {n} --add|--remove "
+              f"--body-file F`, `{ub} type {n} --bug`, `{ub} label {n} --add|--remove "
               "NAME`" + (f", `{ub} review {n} --round {rnd} --event approve|request-changes --body-file F "
                          "[--comments-file JSON]`" if kind == "pr" else
                          f", and for a small fix `{ub} pr {n} --round {rnd} --check` around utm-review and "

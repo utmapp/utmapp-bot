@@ -55,15 +55,17 @@ The agent (`app.getutm.utmapp-bot.github`) runs `ghbot run`. How it works:
     (and a requested change made on the PR's branch), in the session of the
     issue that opened the PR when this Mac has it, else in a new one.
   - unasked (`GHBOT_AUTO`, on by default): every issue opened after this
-    was switched on, by anyone but the bot account, and every pull request
+    was switched on, by anyone but the bot account, whose type is Bug or
+    unset (the Feature template sets its type and needs nothing; a bug
+    report filed on the blank form gets the type Bug, anything else filed
+    blank is left alone), and every pull request
     opened by someone who is not an org member (not a draft). The issue
     list is read for these, since they send the account no notification.
     An issue is sorted first: one whose template form is unfilled or
     garbage is ignored, a blank one with too little to go on is closed as
     not planned with a request to use a template, a duplicate is closed as
     one (GitHub's own link, no label), a vague one gets "needs info" and
-    14 days, a feature request gets
-    "enhancement", one that cannot be triaged here is left alone without
+    14 days, one that cannot be triaged here is left alone without
     a comment, a problem outside UTM's control (macOS, iOS, a jailbreak
     tool, the Virtualization framework) is labelled "external" and stays
     open, and the rest is triaged ("not reproducible" when it does
@@ -90,8 +92,8 @@ The agent (`app.getutm.utmapp-bot.github`) runs `ghbot run`. How it works:
   vouched for. Sessions follow docs/gamesdb.md, "Untrusted input"; the
   posting commands work only on the session's own thread and refuse text
   that identifies this Mac, links outside the reference list, and
-  secrets; labels are limited to four ("not reproducible", "needs info",
-  "enhancement", "external"); only a duplicate or a blank issue
+  secrets; labels are limited to three ("not reproducible", "needs info",
+  "external"), and the only type ever set is Bug on an issue without one; only a duplicate or a blank issue
   with nothing to go on is closed; a PR
   that changes anything run at build time is not built here unless a
   member asked for the review.
