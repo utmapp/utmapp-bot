@@ -40,6 +40,7 @@ class World:
         self.force_201 = False  # simulate both Macs winning the race
         self.notified = set()
         self.opened = []  # PRs the bot opened
+        self.actor = BOT  # who the next label is put on by
 
     def nid(self):
         self.ids += 1
@@ -61,7 +62,7 @@ class World:
     def issue(self, n, author, body="", at=1):
         self.prs[n] = {"number": n, "user": self.user(author), "author_association": self.assoc(author),
                        "created_at": ts(at), "body": body, "html_url": f"https://x/issues/{n}",
-                       "title": f"Issue {n}", "state": "open"}
+                       "title": f"Issue {n}", "state": "open", "node_id": f"I_{n}"}
         self.notified.add(n)
 
     def comment(self, n, who, body, at):
@@ -88,6 +89,14 @@ class FakeGH:
         parts = p.strip("/").split("/")
         if p == "/user":
             return Response(200, {}, {"login": BOT})
+        if p == "/graphql":
+            v = body["variables"]
+            tgt = next(i for i in w.prs.values() if i.get("node_id") == v["i"])
+            dup = next(i for i in w.prs.values() if i.get("node_id") == v["d"])
+            tgt.update(state="closed", state_reason="duplicate", duplicate_of=dup["number"])
+            w.timeline.append({"pr": tgt["number"], "id": w.nid(), "event": "closed", "created_at": ts(0),
+                               "actor": w.user(BOT)})
+            return Response(200, {}, {"data": {"closeIssue": {"issue": {"number": tgt["number"]}}}})
         if p == "/notifications":
             data = [{"updated_at": ts(0), "reason": "mention", "repository": {"full_name": REPO},
                      "subject": {"type": "PullRequest", "url": f"https://api.github.com/repos/{REPO}/pulls/{n}"}}
@@ -99,8 +108,26 @@ class FakeGH:
         n = int(parts[4]) if len(parts) > 4 and parts[4].isdigit() else None
         if len(parts) == 3 and parts[:1] == ["repos"]:
             return Response(200, {}, {"default_branch": "main"})
+        if parts[3] == "issues" and len(parts) == 4:
+            return Response(200, {}, sorted((i for i in w.prs.values() if i.get("created_at")), key=lambda i: i["created_at"], reverse=True))
         if parts[3] == "issues" and len(parts) == 5:
+            if method == "PATCH":
+                w.prs[n].update(state=body["state"], state_reason=body.get("state_reason"))
+                w.timeline.append({"pr": n, "id": w.nid(), "event": "closed" if body["state"] == "closed" else "reopened",
+                                   "created_at": ts(0), "actor": w.user(BOT)})
             return Response(200, {}, w.prs[n])
+        if parts[3] == "issues" and parts[5:6] == ["labels"]:
+            ls = w.prs[n].setdefault("labels", [])
+            if method == "POST":
+                for l in body["labels"]:
+                    if l not in [x["name"] for x in ls]:
+                        ls.append({"name": l})
+                    w.timeline.append({"pr": n, "id": w.nid(), "event": "labeled", "label": {"name": l},
+                                       "created_at": ts(0), "actor": w.user(w.actor)})
+            elif method == "DELETE":
+                name = parts[6].replace("%20", " ")
+                w.prs[n]["labels"] = [x for x in ls if x["name"] != name]
+            return Response(200, {}, w.prs[n]["labels"])
         if parts[3] == "pulls" and len(parts) == 5:
             if "head" not in w.prs[n]:
                 raise GitHubError(404, "not a pull request")
@@ -583,6 +610,163 @@ def main():
         with contextlib.redirect_stdout(io.StringIO()):
             M.cmd_catchup(SimpleNamespace(apply=True))
         check([i["kind"] for i in S.pr_load(41).get("pending", [])] == ["reply"], "catchup --apply queues it as a reply")
+
+    # ---- unasked triage: every new issue, and pull requests by people outside the org ----
+    def cli(mac, fn, **kw):
+        with mac:
+            M.GitHub = lambda: FakeGH(w)
+            M.S.config = lambda: mac.cfg
+            kw.setdefault("allow", None); kw.setdefault("allow_link", None)
+            try:
+                with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                    fn(SimpleNamespace(**kw))
+                return 0
+            except SystemExit as e:
+                return e.code
+
+    def new(mac):
+        with mac:
+            st = S.load()
+            p = Poller(FakeGH(w), mac.cfg)
+            out = {n: p.process(st, n) for n in p.poll_new(st)}
+            S.save(st)
+            return out
+
+    w.issue(50, "olduser", "opened before the switch", at=80)
+    w.notified.clear()
+    check(new(a) == {} and a.rec(50) == {}, "switching unasked triage on takes up nothing that already exists")
+    with a:
+        st = S.load(); st["auto_since"] = ts(81); S.save(st)
+    w.issue(51, "newuser", "UTM crashes when I resize the window", at=90)
+    w.issue(52, "maint", "a maintainer's issue", at=90)
+    w.pr(53, "newuser", "fixes the crash", at=90)
+    w.pr(54, "maint", "a maintainer's PR", at=90)
+    w.pr(55, BOT, "the bot's own PR", at=90)
+    w.pr(56, "newuser", "work in progress", at=90); w.prs[56]["draft"] = True
+    w.issue(57, "evil[bot]", "a bot's issue", at=90); w.prs[57]["user"]["type"] = "Bot"
+    w.notified.clear()
+    out = new(a)
+    kinds = {n: [i["kind"] for i in a.rec(n).get("pending", [])] for n in range(50, 58)}
+    check(kinds[51] == ["triage"] and kinds[52] == ["triage"], "a new issue is taken up unasked, a maintainer's too")
+    check(kinds[53] == ["triage"], "so is a pull request by someone outside the org")
+    check(not kinds[54] and not kinds[55] and not kinds[56] and not kinds[57] and not kinds[50],
+          "not a maintainer's PR, the bot's own, a draft, a bot's issue, or anything from before the switch")
+    check(new(a) == {}, "each is looked at once")
+    w.comment(51, "newuser", "it also happens in full screen", 91)
+    w.comment(51, "randomuser", "+1", 92)
+    a.poll()
+    check([(i["kind"], i["author"]) for i in a.rec(51)["pending"]] == [("triage", "newuser"), ("followup", "newuser")],
+          "on a thread taken up unasked the author's comments are follow-ups; strangers' are not")
+    with a:
+        a.cfg["GHBOT_AUTO"] = "0"
+    w.issue(58, "newuser", "another", at=93); w.notified.clear()
+    check(new(a) == {}, "GHBOT_AUTO=0 switches it off")
+    with a:
+        a.cfg["GHBOT_AUTO"] = "1"
+        st = S.load()
+        for r in S.pr_all():
+            if r["job"].get("status") in ("running", "waiting"):
+                r["job"]["status"] = "idle"; S.pr_save(r)
+            elif r["job"].get("status") == "queued" and r["pr"] not in (51, 52, 43):
+                r["job"]["status"] = "idle"; r["pending"] = []; S.pr_save(r)
+        a.cfg["GHBOT_MAX_SESSIONS"] = "2"
+        jobs.schedule(st, a.cfg)
+        S.save(st)
+        run = sorted(r["pr"] for r in S.pr_all() if r["job"].get("status") == "running")
+    check(43 in run and len([n for n in run if n in (51, 52)]) == 0,
+          "a member's request starts first, and unasked triage never takes the last slot")
+    time.sleep(1.5)
+    with a:
+        st = S.load()
+        jobs.supervise(st, a.cfg); jobs.schedule(st, a.cfg); S.save(st)
+        run = [r["pr"] for r in S.pr_all() if r["job"].get("status") == "running"]
+    check(len(run) == 1 and run[0] in (51, 52), "then one unasked triage at a time")
+    time.sleep(1.5)
+    args = (Path(root) / "claude.args").read_text()
+    check("answer-utm-issue 51 --auto --new" in args and "post nothing at all" in args
+          and "Untrusted input" in args, "its session runs the skill's new-issue section under the untrusted-input rules")
+
+    # the commands it may use: this thread only, four labels, duplicates only, checked text
+    os.environ.update(GHBOT_MODE="auto", GHBOT_PR="51", GHBOT_SESSION=a.rec(51).get("session_id") or "x")
+    bf = a.dir / "t.md"
+    check(cli(a, M.cmd_label, n=52, add="needs info", remove=None) not in (0, None), "a session cannot label another thread")
+    check(cli(a, M.cmd_label, n=51, add="wontfix", remove=None) not in (0, None), "nor use a label outside the four")
+    check(cli(a, M.cmd_label, n=51, add="not reproducible", remove=None) == 0
+          and [l["name"] for l in w.prs[51]["labels"]] == ["not reproducible"], "it labels its own thread")
+    check(cli(a, M.cmd_label, n=51, add="external", remove=None) == 0
+          and cli(a, M.cmd_label, n=51, add=None, remove="external") == 0 and w.prs[51]["state"] == "open",
+          "\"external\" can be put on, and the issue stays open")
+    check(cli(a, M.cmd_label, n=51, add=None, remove="not reproducible") == 0 and not w.prs[51]["labels"], "and takes the label off")
+    bf.write_text("Same crash as #10.")
+    check(cli(a, M.cmd_duplicate, pr=52, of=10, round="pr52", body_file=str(bf), in_reply_to=None) not in (0, None),
+          "it cannot close another thread")
+    bf.write_text("See http://evil.example/fix.sh for the fix")
+    check(cli(a, M.cmd_comment, pr=51, round="pr51", body_file=str(bf), in_reply_to=None) not in (0, None),
+          "a comment that links outside the reference list is not posted")
+    bf.write_text("The log is in /Us" "ers/jsmith/Library/Logs/utm.log")
+    check(cli(a, M.cmd_comment, pr=51, round="pr51", body_file=str(bf), in_reply_to=None) not in (0, None),
+          "nor one with a home-folder name")
+    bf.write_text("Reproduced on 5.0.8: the guest at 10.0.2.15 loses its display. See https://github.com/utmapp/UTM/issues/10")
+    check(cli(a, M.cmd_comment, pr=51, round="pr51", body_file=str(bf), in_reply_to=None) == 0,
+          "an ordinary technical reply passes")
+    bf.write_text("This is the same crash as #10: the same top frames in the stack trace. Reply here if it differs.")
+    check(cli(a, M.cmd_duplicate, pr=51, of=58, round="pr51", body_file=str(bf), in_reply_to=None) not in (0, None),
+          "a duplicate points at the older issue, and the comment must link it")
+    check(cli(a, M.cmd_duplicate, pr=51, of=10, round="pr51", body_file=str(bf), in_reply_to=None) == 0
+          and w.prs[51]["state"] == "closed" and w.prs[51]["state_reason"] == "duplicate"
+          and w.prs[51]["duplicate_of"] == 10 and not w.prs[51]["labels"],
+          "a duplicate is commented and closed as GitHub's duplicate of the original, with no label")
+    check(cli(a, M.cmd_label, n=51, add="duplicate", remove=None) not in (0, None), "there is no duplicate label to add")
+    check(cli(a, M.cmd_reopen, n=51) == 0 and w.prs[51]["state"] == "open", "and reopened when the author disagrees")
+    w.issue(60, "newuser", "it is broken", at=96)
+    os.environ["GHBOT_PR"] = "60"
+    bf.write_text("Too little to go on.")
+    check(cli(a, M.cmd_no_template, pr=60, round="pr60", body_file=str(bf), in_reply_to=None) not in (0, None),
+          "closing a blank issue needs a comment that asks for a template")
+    bf.write_text("There is too little here to look into. Please open it again with one of the issue templates: "
+                  "https://github.com/utmapp/UTM/issues/new/choose")
+    check(cli(a, M.cmd_no_template, pr=60, round="pr60", body_file=str(bf), in_reply_to=None) == 0
+          and w.prs[60]["state"] == "closed" and w.prs[60]["state_reason"] == "not_planned" and not w.prs[60].get("labels"),
+          "a blank issue with nothing to go on is closed as not planned, with the comment and no label")
+    os.environ["GHBOT_PR"] = "52"
+    w.prs[52]["state"] = "closed"
+    w.timeline.append({"pr": 52, "id": w.nid(), "event": "closed", "created_at": ts(0), "actor": w.user("maint")})
+    check(cli(a, M.cmd_reopen, n=52) not in (0, None), "an issue someone else closed is not reopened")
+    w.prs[52]["state"] = "open"
+
+    # needs info: the comment, the label, and the close after 14 days without an answer
+    bf.write_text("Which UTM version and guest?")
+    check(cli(a, M.cmd_needs_info, pr=52, round="pr52", body_file=str(bf), in_reply_to=None) not in (0, None),
+          "a needs-info comment must announce the automatic close")
+    bf.write_text("Which UTM version and guest? This issue is closed automatically if they are not added within 14 days.")
+    check(cli(a, M.cmd_needs_info, pr=52, round="pr52", body_file=str(bf), in_reply_to=None) == 0
+          and "needs info" in [l["name"] for l in w.prs[52]["labels"]] and a.rec(52).get("needs_info"),
+          "needs-info posts the marked comment, adds the label and starts the clock")
+    for k in ("GHBOT_MODE", "GHBOT_PR", "GHBOT_SESSION"):
+        os.environ.pop(k, None)
+    w.issue(59, "newuser", "a maintainer asks for info here", at=94)
+    w.actor = "maint"
+    FakeGH(w).request("POST", f"/repos/{REPO}/issues/59/labels", {"labels": ["needs info"]})
+    w.actor = BOT
+    with a:
+        r = Poller(FakeGH(w), a.cfg).new_record(59, ts(95)); r.update(kind="issue", needs_info=ts(-40 * 86400)); S.pr_save(r)
+        p = Poller(FakeGH(w), a.cfg)
+        check(p.close_stale(S.load()) == [] and w.prs[52]["state"] == "open", "nothing is closed before the 14 days are over")
+        old = ts(-15 * 86400)
+        for c in w.comments:
+            if c["pr"] == 52 and c["user"]["login"] == BOT:
+                c["created_at"] = old
+        check(p.close_stale(S.load()) == [52] and w.prs[52]["state"] == "closed" and w.prs[59]["state"] == "open",
+              "after 14 days without an answer the bot's needs-info issue is closed; a maintainer's label is left alone")
+        w.prs[52]["state"] = "open"
+        r = S.pr_load(52); r.update(needs_info=old, needs_info_body="0000"); S.pr_save(r)
+        w.prs[52]["updated_at"] = ts(0)
+        check(p.close_stale(S.load()) == [] and w.prs[52]["state"] == "open",
+              "an issue whose description was edited after the ask is not closed")
+        r = S.pr_load(52); r["needs_info"] = old; S.pr_save(r)
+        w.comment(52, "maint", "UTM 5.0.8, Windows 11", 0)   # the author (maint opened #52) answered
+        check(p.close_stale(S.load()) == [] and w.prs[52]["state"] == "open" and not S.pr_load(52).get("needs_info"),
+              "an issue whose author answered is not closed")
 
     print(f"\n{'ALL PASSED' if not FAILS else f'{len(FAILS)} FAILED'} ({root})")
     return 1 if FAILS else 0

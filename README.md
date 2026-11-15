@@ -108,7 +108,7 @@ and moderate them; `db-setup` lets a Mac run them unattended.
 |---|---|
 | `review-utm-pr <PR>` | Review and test a utmapp/UTM pull request: UTM's own review (blockers only), screenshots on every configuration CONTRIBUTING.md recommends, one comment with the results |
 | `answer-utm-issue <issue>` | Answer a UTM issue of any kind: reproduce it where it happens, find the cause, and reply; a small fix is opened as a PR, a large one gets a fix outline |
-| `github-setup` | Once per Mac: pick up `@`-mentions (PRs and issues), review requests and follow-up comments for the bot account in unattended sessions (several Macs share the work) |
+| `github-setup` | Once per Mac: pick up `@`-mentions (PRs and issues), review requests and follow-up comments for the bot account in unattended sessions, and triage every new issue and outside bug-fix PR unasked (several Macs share the work) |
 
 ### Process
 

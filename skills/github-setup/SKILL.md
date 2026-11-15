@@ -54,7 +54,23 @@ The agent (`app.getutm.utmapp-bot.github`) runs `ghbot run`. How it works:
     comment, mention or not. It is never reviewed; the comment is answered
     (and a requested change made on the PR's branch), in the session of the
     issue that opened the PR when this Mac has it, else in a new one.
-  Either trigger claims the PR or issue.
+  - unasked (`GHBOT_AUTO`, on by default): every issue opened after this
+    was switched on, by anyone but the bot account, and every pull request
+    opened by someone who is not an org member (not a draft). The issue
+    list is read for these, since they send the account no notification.
+    An issue is sorted first: one whose template form is unfilled or
+    garbage is ignored, a blank one with too little to go on is closed as
+    not planned with a request to use a template, a duplicate is closed as
+    one (GitHub's own link, no label), a vague one gets "needs info" and
+    14 days, a feature request gets
+    "enhancement", one that cannot be triaged here is left alone without
+    a comment, a problem outside UTM's control (macOS, iOS, a jailbreak
+    tool, the Virtualization framework) is labelled "external" and stays
+    open, and the rest is triaged ("not reproducible" when it does
+    not reproduce). A bug-fix PR is reproduced, fixed independently,
+    compared and reviewed; any other PR is left alone. Nothing older than
+    the switch-on is ever taken up.
+  Every trigger claims the PR or issue.
 - **Follow-ups:** later comments go to that same session. They come from
   org members, and from the PR's or issue's author once a member has
   started the conversation or the bot has commented there. A small fix whose cause the conversation
@@ -70,6 +86,22 @@ The agent (`app.getutm.utmapp-bot.github`) runs `ghbot run`. How it works:
 - **Two Macs racing:** if both win the first claim, both work.
   `utmbot gh comment|review` refuse a round the account already answered
   (DUPLICATE), so the slower Mac discards its work.
+- **Strangers' threads:** unasked triage reads text and code nobody
+  vouched for. Sessions follow docs/gamesdb.md, "Untrusted input"; the
+  posting commands work only on the session's own thread and refuse text
+  that identifies this Mac, links outside the reference list, and
+  secrets; labels are limited to four ("not reproducible", "needs info",
+  "enhancement", "external"); only a duplicate or a blank issue
+  with nothing to go on is closed; a PR
+  that changes anything run at build time is not built here unless a
+  member asked for the review.
+- **"needs info":** `GHBOT_NEEDS_INFO_DAYS` (14) after the bot asked, the
+  poller closes the issue if the author has not answered. Only where the
+  bot's own marked comment and its own labelling are on the thread: a
+  maintainer's "needs info" is never touched.
+- **Unasked limits:** one unasked triage at a time, never in the last
+  session slot (requests go first), at most `GHBOT_AUTO_PER_DAY` (15) a
+  day. `GHBOT_AUTO=0` in `~/.utmapp-bot/github.env` switches it off.
 - **Limits:** one new review at a time and at most 2 sessions. No daily
   cap by default; `GHBOT_REVIEWS_PER_DAY=N` in `~/.utmapp-bot/github.env`
   sets one (a guard against runaway cost).

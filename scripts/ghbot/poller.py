@@ -10,6 +10,16 @@ work: a triage run by hand leaves no record here, so GitHub's own thread
 is what counts (spoke_before).  Everyone else, and every bot account, is
 ignored without a reply.
 
+Unasked (GHBOT_AUTO, on by default): every issue and pull request opened
+after this was switched on is taken up as a "triage" round without anyone
+calling the bot (poll_new: new issues send this account no notification,
+so the issue list is read).  Not the account's own, not a pull request an
+org member opened, not a draft.  What the session then does (duplicate,
+needs info, enhancement, a reproduction, nothing at all) is the skills'
+business; its author is a stranger, so everything it may write to GitHub
+goes through `utmbot gh`'s thread-bound, checked commands.  On such a
+thread the author's and members' later comments are follow-ups.
+
 The account's own pull requests (a fix utm-submit opened) are never
 reviewed, but every comment a member leaves there is for the bot (no
 mention needed) and is answered, in the session of the issue that opened
@@ -32,6 +42,17 @@ from ghbot.gh import GitHubError
 
 MEMBER_CACHE = 24 * 3600
 MEMBER_ASSOC = ("MEMBER", "OWNER")
+NEEDS_INFO = "needs info"
+NEEDS_INFO_MARK = "<!-- utmapp-bot needs-info -->"
+
+
+def _digest(text):
+    import hashlib
+    return hashlib.sha256((text or "").encode()).hexdigest()[:16]
+
+
+def auto_on(cfg):
+    return str(cfg.get("GHBOT_AUTO", "1")).strip().lower() not in ("0", "", "no", "false", "off")
 
 
 def _ts(iso):
@@ -228,6 +249,15 @@ class Poller:
 
         me = self.login().lower()
         author = pr["user"]["login"].lower()
+        # opened after unasked triage was switched on: taken up without a call
+        # (not the account's own, not a member's or a draft pull request)
+        auto_new = (auto_on(self.cfg) and bool(st.get("auto_since")) and pr.get("created_at", "") > st["auto_since"]
+                    and pr.get("state") == "open"
+                    and author != me and pr["user"].get("type") != "Bot" and not author.endswith("[bot]")
+                    and not rec.get("auto_seen")
+                    and not (kind == "pr" and (pr.get("draft") or self.is_member(st, pr["user"]["login"],
+                                                                             pr.get("author_association")))))
+        rec["auto_seen"] = True
         # its own PR (or issue), e.g. a fix utm-submit opened: never reviewed,
         # but a member's comment (mention or not) is answered (kind "answer"),
         # in the session of the issue that opened it when this Mac has it
@@ -240,7 +270,8 @@ class Poller:
             if who.lower() == me or it.get("author_type") == "Bot" or who.endswith("[bot]"):
                 continue
             member = self.is_member(st, who, it.get("assoc"))
-            started = bool(rec.get("initiated_by")) or any(i["kind"] in ("review", "answer") for i in inputs)
+            started = (bool(rec.get("initiated_by")) or bool(rec.get("auto"))
+                       or any(i["kind"] in ("review", "answer", "triage") for i in inputs))
             if it["type"] == "review_request":
                 if member and not own:
                     it["kind"] = "review" if not started else "followup"
@@ -248,6 +279,10 @@ class Poller:
                     inputs.append(it)
                 continue
             it["mentions"] = self.mentions_me(it["body"])
+            if auto_new and it["type"] == "description" and not started and not (member and it["mentions"]):
+                it.update(kind="triage", member=member)
+                inputs.append(it)
+                continue
             # the author answering after this account commented (it asked them
             # something): for the bot, whoever started that work
             # (a member's mention still calls the bot the usual way)
@@ -277,6 +312,7 @@ class Poller:
         if rec.get("owner") != "mine":
             got, rid = self.claim(n)
             if got == "error":
+                rec["auto_seen"] = not auto_new
                 S.pr_save(rec)  # cursor kept: the same activity is tried again
                 return f"could not claim: {rid} (tried again at the next poll)"
             if got == "other":
@@ -286,6 +322,8 @@ class Poller:
                 return "owned by another machine"
             rec.update(owner="mine", reaction_id=rid, claimed=S.utc())
             S.log(f"#{n}: claimed (👀 {rid})")
+        if any(i["kind"] == "triage" for i in inputs):
+            rec["auto"] = True
         if not rec.get("initiated_by"):
             # a reply starts nothing: the author stays limited to replies
             rec["initiated_by"] = next((i["author"] for i in inputs if i["kind"] in ("review", "answer")), None)
@@ -297,7 +335,7 @@ class Poller:
                 rec.update(session_id=origin["session_id"], origin=origin["pr"])
                 S.log(f"#{n}: answered in issue #{origin['pr']}'s session {origin['session_id']}")
         for it in inputs:
-            if it.get("mentions") or it["kind"] in ("review", "answer", "reply"):
+            if it["type"] != "description" and (it.get("mentions") or it["kind"] in ("review", "answer", "reply")):
                 self.ack(it)
             it.pop("assoc", None)
             it["body"] = it["body"][:20000]
@@ -346,6 +384,85 @@ class Poller:
         # cursor is not lost (PR cursors make a second look harmless)
         st["since"] = S.utc(max(_ts(newest) - 60, _ts(since)))
         return sorted(nums)
+
+    def poll_new(self, st):
+        """Numbers of issues and pull requests opened since unasked triage was
+        switched on that this Mac has not looked at yet (oldest first).  The
+        first call only sets the start: nothing older is ever taken up."""
+        if not auto_on(self.cfg):
+            return []
+        if not st.get("auto_since"):
+            st["auto_since"] = S.utc()
+            S.log(f"unasked triage: new issues and pull requests from {st['auto_since']} on")
+            return []
+        since, fresh, url = st["auto_since"], [], f"/repos/{self.repo}/issues?state=all&sort=created&direction=desc&per_page=50"
+        while url and len(fresh) < 500:
+            r = self.gh.request("GET", url)
+            page = [i for i in (r.data or []) if i.get("created_at", "") > since]
+            fresh += page
+            m = re.search(r'<([^>]+)>;\s*rel="next"', r.headers.get("Link", "") or "")
+            url = m[1].replace("https://api.github.com", "") if m and len(page) == len(r.data or []) and page else None
+        todo = [i["number"] for i in fresh if not (S.pr_load(i["number"]) or {}).get("auto_seen")]
+        if fresh and not todo:
+            st["auto_since"] = max(i["created_at"] for i in fresh)  # all looked at: the list need not grow
+        return sorted(todo)
+
+    def close_stale(self, st):
+        """Close issues that still wait for details this account asked for
+        GHBOT_NEEDS_INFO_DAYS ago.  Decided from GitHub alone, so any Mac may
+        run it, and only where it was the bot that asked: its comment carries
+        the marker, it put the label on, the label is still there, and since
+        then the author has not commented, nobody edited the description, and
+        no org member wrote (a person is on it).  A maintainer's own "needs
+        info" is never touched."""
+        days = float(self.cfg.get("GHBOT_NEEDS_INFO_DAYS") or 14)
+        me, closed = self.login().lower(), []
+        for rec in S.pr_all():
+            if not rec.get("needs_info") or rec.get("kind") != "issue":
+                continue
+            n = rec["pr"]
+            try:
+                issue = self.gh.get(f"/repos/{self.repo}/issues/{n}")
+                done = issue.get("state") != "open" or NEEDS_INFO not in [l["name"] for l in issue.get("labels") or []]
+                asked = None
+                if not done:
+                    cs = self.gh.paged(f"/repos/{self.repo}/issues/{n}/comments")
+                    marks = [c for c in cs if c["user"]["login"].lower() == me and NEEDS_INFO_MARK in (c.get("body") or "")]
+                    asked = max((c["created_at"] for c in marks), default=None)
+                    author = issue["user"]["login"].lower()
+                    labeled = [e for e in self.gh.paged(f"/repos/{self.repo}/issues/{n}/timeline")
+                               if e.get("event") == "labeled" and (e.get("label") or {}).get("name") == NEEDS_INFO]
+                    mine = bool(labeled) and ((labeled[-1].get("actor") or {}).get("login") or "").lower() == me
+                    done = (not asked or not mine
+                            or (issue.get("updated_at") and rec.get("needs_info_body") is not None
+                                and _digest(issue.get("body")) != rec["needs_info_body"])
+                            or any(c["created_at"] > asked and c["user"]["login"].lower() != me
+                                   and (c["user"]["login"].lower() == author
+                                        or self.is_member(st, c["user"]["login"], c.get("author_association")))
+                                   for c in cs))
+                if done:
+                    with S.locked():
+                        cur = S.pr_load(n) or rec
+                        cur.pop("needs_info", None)
+                        cur.pop("needs_info_body", None)
+                        S.pr_save(cur)
+                    continue
+                if time.time() - _ts(asked) < days * 86400 or self.dry:
+                    continue
+                self.gh.request("POST", f"/repos/{self.repo}/issues/{n}/comments", {"body": (
+                    f"Closing this because the details asked for above were not added within {days:g} days. "
+                    "If you can add them, reply here and it will be looked at again.\n\n<!-- utmapp-bot needs-info-closed -->\n")})
+                self.gh.request("PATCH", f"/repos/{self.repo}/issues/{n}", {"state": "closed", "state_reason": "not_planned"})
+                with S.locked():
+                    cur = S.pr_load(n) or rec
+                    cur.pop("needs_info", None)
+                    cur["closed_needs_info"] = S.utc()
+                    S.pr_save(cur)
+                closed.append(n)
+                S.log(f"#{n}: closed: no details {days:g} days after they were asked for")
+            except GitHubError as e:
+                S.log(f"#{n}: needs-info check failed: {e}")
+        return closed
 
     def unanswered(self):
         """Threads this Mac has seen where the author wrote after this

@@ -29,7 +29,10 @@ LOG = D / "ghbot.log"
 PAUSED = D / "PAUSED"
 
 DEFAULTS = {"GHBOT_REPO": "utmapp/UTM", "GHBOT_ORG": "utmapp", "GHBOT_POLL": "120",
-            "GHBOT_REVIEWS_PER_DAY": "0", "GHBOT_RELEASE_DAYS": "7", "GHBOT_MAX_SESSIONS": "2"}
+            "GHBOT_REVIEWS_PER_DAY": "0", "GHBOT_RELEASE_DAYS": "7", "GHBOT_MAX_SESSIONS": "2",
+            # triage every new issue and bug-fix PR without being asked (0: only when called);
+            # at most this many such sessions a day; days before a "needs info" issue is closed
+            "GHBOT_AUTO": "1", "GHBOT_AUTO_PER_DAY": "15", "GHBOT_NEEDS_INFO_DAYS": "14"}
 
 
 def config():
