@@ -61,7 +61,11 @@ against a repository the org owns (utmapp/<name>), opened with `{plugin}/bin/gam
 utmapp/<name> --check` and `--record`; when UTM pins that repository by commit, the UTM pull request \
 that moves the pin is opened as a draft (`--draft`) and stays one until an org member says there that \
 the other is merged (`gh pr ready` then, and `gh pr edit` for the body, are allowed on this account's \
-own pull request). A repository anyone else holds (osy's included) gets a fix branch only (`fix-branch` \
+own pull request). You cannot push to another person's pull request and never try, whatever access \
+GitHub shows: a change you propose there is a suggestion in your review (`utmbot gh review \
+--comments-file`) when it is small, or a commit on a `review/pr-<n>-...` branch of the bot's fork of UTM \
+(`git push origin`, a new branch) linked from your comment when it is larger, with a review that requests \
+changes; a maintainer decides whether it goes onto the pull request. A repository anyone else holds (osy's included) gets a fix branch only (`fix-branch` \
 without `--pr`), never a pull request. Push branches only to the bot's forks (through those commands and \
 utm-submit), never to utmapp's repositories. If one exits with DUPLICATE, another Mac on this account \
 already answered: discard your work (clean up VMs, worktrees and the UTM lease as the skill says) \
@@ -194,9 +198,11 @@ def first_prompt(rec, items, plugin):
             lines.append(_quote(it["body"]))
     if kind == "pr":
         lines += ["", f"Post the review comment with `{plugin}/bin/utmbot gh comment {n} --round {trig['id']} "
-                  f"--body-file FILE`, and (step 8, when this account is a requested reviewer) the review with "
+                  f"--body-file FILE`, and (step 8) the review with "
                   f"`{plugin}/bin/utmbot gh review {n} --round {trig['id']} --event approve|request-changes "
-                  f"--body-file FILE`. If the request asks for something narrower than a full review (one "
+                  f"--body-file FILE [--comments-file JSON]`: request changes whenever you propose any (small "
+                  "ones as suggestions in that review, larger ones as a commit on the bot's fork linked from "
+                  "the comment); approve only when this account is a requested reviewer. If the request asks for something narrower than a full review (one "
                   "configuration, one question), do that, and answer it the same way."]
     else:
         lines += ["", f"Answer on the issue with `{plugin}/bin/utmbot gh comment {n} --round {trig['id']} "

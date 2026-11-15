@@ -24,8 +24,13 @@ For sessions the poller started (a person may use them too):
                             round; exits 3 with DUPLICATE when this account already
                             answered the round from another Mac (discard your work)
   review PR --round R --event approve|request-changes|comment --body-file F
+         [--comments-file JSON]
                             submit a review on the PR's head, refused (DUPLICATE) the same
-                            way, and when this account already reviewed that head
+                            way, and when this account already reviewed that head.
+                            --comments-file: inline comments submitted with it, a JSON list
+                            of {"path", "line", "body"} (and "start_line" for a range), each
+                            on lines of the PR's diff; a body holding a ```suggestion block
+                            is a change the author can apply with one click
   pr ISSUE --round R [--repo OWNER/NAME] --check | --record PR
                             around whatever opens a fix's PR (this never does): UTM's own
                             utm-submit, or, with --repo, `gamesdb fix-branch --pr` for another
@@ -317,6 +322,30 @@ def cmd_pr(a):
 EVENTS = {"approve": "APPROVE", "request-changes": "REQUEST_CHANGES", "comment": "COMMENT"}
 
 
+def _inline(path):
+    """The review's inline comments, as GitHub's API takes them (the new
+    side of the diff: a suggestion replaces the lines it is on)."""
+    import json
+    try:
+        items = json.loads(Path(path).read_text())
+    except ValueError as e:
+        die(f"{path}: not JSON ({e})")
+    if not isinstance(items, list) or not items:
+        die(f"{path}: a non-empty JSON list of {{path, line, body}}")
+    out = []
+    for i, c in enumerate(items):
+        if not isinstance(c, dict) or not isinstance(c.get("path"), str) or not isinstance(c.get("line"), int) \
+                or not (c.get("body") or "").strip():
+            die(f"{path}: item {i} needs \"path\", an integer \"line\" and a \"body\"")
+        d = {"path": c["path"], "line": c["line"], "side": "RIGHT", "body": c["body"]}
+        if c.get("start_line") is not None and c["start_line"] != c["line"]:
+            if not isinstance(c["start_line"], int) or c["start_line"] > c["line"]:
+                die(f"{path}: item {i}: start_line is the first line of the range, before line")
+            d.update(start_line=c["start_line"], start_side="RIGHT")
+        out.append(d)
+    return out
+
+
 def cmd_review(a):
     _round_ok(a.round)
     body = Path(a.body_file).read_text()
@@ -338,8 +367,10 @@ def cmd_review(a):
         if v.get("commit_id") == head and v.get("state") in ("APPROVED", "CHANGES_REQUESTED") \
                 and EVENTS[a.event] != "COMMENT":
             _duplicate(n, a.round, rec, f"this account already reviewed {head[:10]} ({v['state'].lower()})")
-    r = p.gh.request("POST", f"/repos/{R}/pulls/{n}/reviews",
-                     {"event": EVENTS[a.event], "commit_id": head, "body": body.rstrip() + "\n\n" + tag + "\n"})
+    payload = {"event": EVENTS[a.event], "commit_id": head, "body": body.rstrip() + "\n\n" + tag + "\n"}
+    if getattr(a, "comments_file", None):
+        payload["comments"] = _inline(a.comments_file)
+    r = p.gh.request("POST", f"/repos/{R}/pulls/{n}/reviews", payload)
     _record(n, a.round, r.data["id"], head)
     print(r.data.get("html_url"))
 
@@ -431,6 +462,7 @@ def main(argv):
     s.add_argument("--body-file", required=True); s.add_argument("--in-reply-to", type=int)
     s = sub.add_parser("review"); s.add_argument("pr", type=int); s.add_argument("--round", required=True)
     s.add_argument("--event", required=True, choices=sorted(EVENTS)); s.add_argument("--body-file", required=True)
+    s.add_argument("--comments-file")
     s = sub.add_parser("pr"); s.add_argument("issue", type=int); s.add_argument("--round", required=True)
     s.add_argument("--repo", help="OWNER/NAME: another repository the org owns (default: GHBOT_REPO)")
     g = s.add_mutually_exclusive_group(required=True)

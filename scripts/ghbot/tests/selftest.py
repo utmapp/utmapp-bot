@@ -124,7 +124,8 @@ class FakeGH:
             if method == "POST":
                 v = {"id": w.nid(), "pr": n, "user": w.user(BOT), "body": body["body"], "submitted_at": ts(0),
                      "state": {"APPROVE": "APPROVED", "REQUEST_CHANGES": "CHANGES_REQUESTED"}.get(body["event"], "COMMENTED"),
-                     "commit_id": body["commit_id"], "html_url": "https://x/review"}
+                     "commit_id": body["commit_id"], "html_url": "https://x/review",
+                     "comments": body.get("comments")}
                 w.reviews.append(v)
                 return Response(200, {}, v)
             return Response(200, {}, [v for v in w.reviews if v["pr"] == n])
@@ -531,6 +532,23 @@ def main():
     check(code in (0, None) and a.rec(40)["rounds"].get(rnd40), "the reply is posted and recorded")
     code, _ = a.post(10, a.rec(10)["delivered"][0], "the first answer on an issue")
     check(code in (0, None) and a.rec(10)["rounds"], "a first-round answer on an issue is recorded (an issue has no head)")
+
+    # a review of someone else's PR that proposes a small change: request changes, with a suggestion
+    with a:
+        M.GitHub = lambda: FakeGH(w)
+        M.S.config = lambda: a.cfg
+        bf, cf = a.dir / "rv.md", a.dir / "rv.json"
+        bf.write_text("One line must change; see the comment above.")
+        cf.write_text(json.dumps([{"path": "a.swift", "start_line": 4, "line": 6,
+                                   "body": "Why.\n\n```suggestion\nlet x = 1\n```"}]))
+        with contextlib.redirect_stdout(io.StringIO()):
+            M.cmd_review(SimpleNamespace(pr=3, round=a.rec(3)["delivered"][0], event="request-changes",
+                                         body_file=str(bf), comments_file=str(cf)))
+    v = w.reviews[-1]
+    check(v["state"] == "CHANGES_REQUESTED" and v["comments"] == [
+        {"path": "a.swift", "line": 6, "side": "RIGHT", "start_line": 4, "start_side": "RIGHT",
+         "body": "Why.\n\n```suggestion\nlet x = 1\n```"}],
+          "a review requests changes and carries its suggestions as inline comments on the new side")
 
     # an org member who is the author: a mention calls the bot as always; without one it is a reply
     w.issue(42, "maint", "a member's own issue", at=66)

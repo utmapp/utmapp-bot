@@ -1,6 +1,6 @@
 ---
 name: review-utm-pr
-description: Review and test a pull request on utmapp/UTM — check it out on the bot's fork, run UTM's own utm-review on it and keep only the blockers (each with a recommended fix), then, when it touches the UI, build it and collect screenshots (or a video for animations) on every configuration UTM's CONTRIBUTING.md recommends, reproduce a UI bug before the fix, prove that touched SwiftUI layouts did not change, and propose a fix (with a screenshot) for any problem the screenshots show; post it all as one PR comment, and approve or request changes when the signed-in account is a requested reviewer. Use when asked to review, test or screenshot a UTM PR, or given a utmapp/UTM pull request number or URL.
+description: Review and test a pull request on utmapp/UTM — check it out on the bot's fork, run UTM's own utm-review on it and keep only the blockers (each with a recommended fix), then, when it touches the UI, build it and collect screenshots (or a video for animations) on every configuration UTM's CONTRIBUTING.md recommends, reproduce a UI bug before the fix, prove that touched SwiftUI layouts did not change, and propose a fix (with a screenshot) for any problem the screenshots show; post it all as one PR comment, and submit a review that requests changes whenever it proposes any (small ones as GitHub suggestions in the review, larger ones as a commit on a branch of the bot's fork linked from the comment; never a push to the author's branch), or approves when the signed-in account is a requested reviewer. Use when asked to review, test or screenshot a UTM PR, or given a utmapp/UTM pull request number or URL.
 argument-hint: "<PR number or URL> [--auto]"
 ---
 
@@ -67,8 +67,9 @@ crash, a security hole, data loss, a regression on a supported OS version),
 or a CONTRIBUTING.md/AGENTS.md rule a maintainer would not merge past
 (missing `Assisted-by`, a `Co-authored-by` trailer, unrelated changes in the
 PR, a hand-edited generated file, logging outside UTMLogging). Each with
-`file:line`, why it blocks, and the **recommended fix** (a short diff when it
-is small). Drop style nits, pre-existing issues and anything a compiler
+`file:line`, why it blocks, and the **recommended fix**, in the form step
+7 gives ("Proposing changes": a suggestion when it is small, a commit on
+the bot's fork when it is larger). Drop style nits, pre-existing issues and anything a compiler
 catches.
 
 ## 4. Does it need screenshots?
@@ -176,11 +177,61 @@ Capture:
 
 **A problem in the screenshots:** say what is wrong, on which
 configurations, and why (read the code); propose a fix; and show it working.
-Apply the fix in the head worktree (not committed, not pushed), rebuild,
-take one representative screenshot, then revert it
-(`git -C <head worktree> checkout -- .`).
+Apply the fix in the head worktree, rebuild, and take one representative
+screenshot. Then hand it over as step 7's "Proposing changes" says: a
+small fix becomes a suggestion and is reverted here (`git -C <head
+worktree> checkout -- .`); a larger one is committed and pushed to a
+branch of the bot's fork.
 
 ## 7. The comment
+
+### Proposing changes
+
+The PR is someone else's branch. You usually have no permission to push to
+it, and you never try, even when GitHub shows that maintainers may edit
+it: the author and a maintainer decide what goes onto it. Every change you
+recommend (a blocker's fix, a fix for a problem in the screenshots) is
+handed over in one of two forms.
+
+- **Small: a GitHub suggestion.** The change replaces a few adjacent
+  lines that the PR's diff contains (added or context lines of a hunk).
+  It becomes an inline comment of the review (step 8) on those lines:
+
+  ````markdown
+  Why this must change, in a sentence or two.
+
+  ```suggestion
+  the replacement for exactly the lines the comment is on
+  ```
+  ````
+
+  The author applies it with one click. The block replaces the whole
+  commented range (`start_line` to `line`), with the file's own
+  indentation; an empty block deletes the lines. Several small changes
+  are several suggestions.
+- **Larger: a commit on the bot's fork.** Anything a suggestion cannot
+  carry: more than a handful of lines, several places that must change
+  together, lines outside the PR's diff, a new file. Commit it on top of
+  the PR's head in the head worktree, following UTM's commit rules
+  (CONTRIBUTING.md: `component: summary`, `Assisted-by`, no
+  `Co-authored-by`), build it, test it as you would your own fix, and
+  push it to a new branch of the bot's fork only:
+
+  ```sh
+  git -C <head worktree> switch -c review/pr-<n>-<slug>
+  git -C <head worktree> commit -F <message file>
+  git -C <head worktree> push origin review/pr-<n>-<slug>      # origin = the bot's fork
+  ```
+
+  Link the commit in the comment
+  (`https://github.com/<login>/UTM/commit/<sha>`), with what it changes
+  and how it was tested. A maintainer reviews it and puts it onto the PR
+  (a force-push there) if it makes sense; say so. Never open a pull
+  request for it, against utmapp/UTM or against the author's fork.
+
+Either way, the review in step 8 requests changes.
+
+### The comment
 
 Publish the screenshots and videos (the bot's fork, branch `review-assets`):
 
@@ -193,7 +244,7 @@ Then one comment, in this order and nothing else:
 ```markdown
 ## Review
 
-**Blockers** — none. | 1. `path:line` — what and why. **Fix:** … (diff)
+**Blockers** — none. | 1. `path:line` — what and why. **Fix:** suggested in the review. | **Fix:** <commit link on the bot's fork>, what it changes.
 
 ## Testing
 
@@ -209,7 +260,7 @@ Built <head sha> (and base <sha>) with Xcode <version>.
 **Layout unchanged** (<configurations>): base ![](…) head ![](…)
 
 ## Issues in the screenshots
-<what, where, why> **Proposed fix:** (diff) — with it: ![](…)
+<what, where, why> **Proposed fix:** suggested in the review | <commit link> — with it: ![](…)
 ```
 
 Leave out the sections that do not apply (no screenshots taken → no Testing
@@ -227,17 +278,41 @@ not from what the PR description says.
   something narrower than a full review, do only that, and answer the same
   way.
 
-## 8. Approve or request changes (requested reviewer only)
+## 8. The review: request changes, or approve
 
-When the signed-in login is in `reviewRequests` (step 1):
-- blockers, or a problem in the screenshots: `gh pr review <n> -R utmapp/UTM --request-changes --body "<one paragraph: what must change, see the comment above>"`;
-- otherwise: `gh pr review <n> -R utmapp/UTM --approve --body "<one line: tested on …>"`.
+- **You propose changes** (blockers, or a problem in the screenshots):
+  submit a review that requests changes, whether or not this account is a
+  requested reviewer. Its body is one paragraph: what must change, and
+  that the details are in the comment above. Its inline comments are the
+  suggestions from step 7.
+- **Nothing to change, and the signed-in login is in `reviewRequests`**
+  (step 1): approve, with one line on what was tested.
+- **Nothing to change, and not a requested reviewer:** no review; the
+  comment is the result.
 
-Interactive: confirm with the user first, as for the comment. Started by
-the GitHub poller: `$UB gh review <n> --round <round> --event
-approve|request-changes --body-file <file>`, which refuses (DUPLICATE) as
-`gh comment` does, and also when the account already reviewed this head.
-Never approve a PR you could not build or test; say so in a plain comment
+Suggestions go in a JSON file, one item per suggestion, on lines of the
+PR's head (the new side of the diff):
+
+```json
+[{"path": "Platform/macOS/VMDetailsView.swift", "start_line": 41, "line": 43,
+  "body": "Why.\n\n```suggestion\nreplacement lines\n```"}]
+```
+
+- **Started by the GitHub poller:** `$UB gh review <n> --round <round>
+  --event request-changes|approve --body-file <file> [--comments-file
+  <json>]`. It refuses (DUPLICATE) as `gh comment` does, and also when the
+  account already reviewed this head.
+- **Otherwise** (interactive: confirm with the user first, as for the
+  comment): without suggestions, `gh pr review <n> -R utmapp/UTM
+  --request-changes|--approve --body-file <file>`; with them, one API
+  call, so they arrive as one review:
+  `gh api repos/utmapp/UTM/pulls/<n>/reviews --input <review.json>`, where
+  the file holds `{"event": "REQUEST_CHANGES", "commit_id": "<head sha>",
+  "body": "…", "comments": [the items above, each with "side": "RIGHT"
+  (and "start_side": "RIGHT" for a range)]}`.
+
+GitHub rejects the whole review when one comment is on a line outside the
+diff: move that change to a commit on the fork instead. Never approve a PR you could not build or test; say so in a plain comment
 instead.
 
 ## Follow-ups (GitHub poller)
@@ -260,9 +335,10 @@ its round):
 
 Shut down the VMs you started (`$UB mac down VM`), `git worktree remove` both
 worktrees (after removing the symlinks by name), delete `pr-<n>` if you
-created it, and `$UB lock release`.
+created it, and `$UB lock release`. A `review/pr-<n>-…` branch you pushed
+stays on the fork: the comment links it.
 
 ## Report
 
 The verdict (blockers, or ready), the comment's URL, the review submitted
-(if any), and the configurations tested and skipped.
+(if any), the changes proposed (suggestions, or the commit on the fork), and the configurations tested and skipped.
