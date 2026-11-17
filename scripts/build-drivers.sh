@@ -160,7 +160,8 @@ echo "=== Pulling $outdir"
 # into a scratch directory first, so a failed copy leaves the last packages
 rm -rf "${OUT:?}/.pull"
 mkdir -p "$OUT/.pull"
-gscp -r "$HOST:${outdir//\\//}" "$OUT/.pull/"
+# -p: the manifests keep their build time, which `utmbot install` quotes
+gscp -rp "$HOST:${outdir//\\//}" "$OUT/.pull/"
 rm -rf "${OUT:?}/$osdir"
 mv "$OUT/.pull/$osdir" "$OUT/$osdir"
 rm -rf "${OUT:?}/.pull"

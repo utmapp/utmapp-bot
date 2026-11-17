@@ -71,10 +71,11 @@ $UB vm down
 
 `verify` checks the device, D3D11/D3D12 on the VirtIO adapter
 (`adaptercheck`) and Vulkan through the package's Venus ICD (`vkreadback`,
-ARM64; it prints the ICD's `driverInfo`, which names the Mesa commit). The
-released guest tools of 2026-10-29 and older register an ICD the Vulkan
-loader cannot find, so with `install --released` it reports `VULKAN FAIL`
-without failing the check.
+ARM64; it prints the ICD's `driverInfo`, which names the Mesa commit).
+Packages whose `virtio_icd.json` names the DLL without a path (the released
+guest tools of 2026-10-29 and older, dev packages from before viogpu-wddm
+6a8c9d39) register an ICD the Vulkan loader cannot find; for those it
+reports `VULKAN FAIL … expected` without failing the check.
 
 `vm up` prints `UP <vm> ssh=… run_dir=… backend=… net=as-configured|emulated`. `net=emulated` means the app has no vmnet
 entitlement: the VM runs on QEMU's user network for this boot, SSH goes

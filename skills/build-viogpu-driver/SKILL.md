@@ -111,7 +111,7 @@ no copy in `System32\drivers`. For a user, this one line in PowerShell
 prints both commits of the driver Windows has loaded:
 
 ```powershell
-$d = Split-Path ((Get-CimInstance Win32_VideoController | ? InstalledDisplayDrivers -like '*neptune_umd*').InstalledDisplayDrivers -split ',')[1]; Get-Item "$d\viogpu3d.sys","$d\neptune_umd.dll" | % { '{0}  {1}' -f $_.Name, $_.VersionInfo.ProductVersion }
+$d = Split-Path (((Get-CimInstance Win32_VideoController).InstalledDisplayDrivers -split ',') -like '*\neptune_umd.dll')[0]; Get-Item "$d\viogpu3d.sys","$d\neptune_umd.dll" | % { '{0}  {1}' -f $_.Name, $_.VersionInfo.ProductVersion }
 ```
 
 ```

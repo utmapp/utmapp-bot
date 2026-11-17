@@ -330,6 +330,19 @@ def driver_identity(pkg_dir):
     return f"unidentified package {pkg_dir}"
 
 
+def _icd_resolvable(installed):
+    """Whether the package installed this boot registers a Vulkan ICD the
+    loader can load: its virtio_icd.json gives library_path relative to the
+    manifest (".\\vulkan_virtio.dll").  The released guest tools (installed
+    is not a directory on this Mac) and unknown packages count as not."""
+    import json
+    try:
+        icd = json.loads((Path(str(installed)) / "virtio_icd.json").read_text())
+        return str(icd["ICD"]["library_path"]).startswith((".\\", "./"))
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+
+
 def verify(vm):
     """Device started on the 3D driver, D3D creates on the VirtIO adapter, and
     Vulkan (Venus) renders.
@@ -362,15 +375,17 @@ def verify(vm):
     if vk:
         o, rc2, out2 = test(vm, str(vk), [], timeout_s=120)
         if o != Outcome.DONE or rc2 != 0:
-            # The guest tools released up to 2026-10-29 register an ICD manifest
-            # the loader cannot resolve (a bare DLL name, fixed in viogpu-wddm
-            # 6a8c9d39), so their Vulkan never worked: report it, but only a
-            # dev package (or none installed this boot) fails the check.
-            released = str(Session(vm).get("installed_driver") or "").startswith("released")
-            print("VULKAN FAIL (vkreadback): the Venus ICD did not load or render"
-                  + (" (expected for the released guest tools of 2026-10-29 and older)" if released else ""))
-            if not released:
+            # Packages whose virtio_icd.json names the DLL bare (the guest tools
+            # released up to 2026-10-29, and dev packages built before
+            # viogpu-wddm 6a8c9d39) register an ICD the loader cannot resolve
+            # in the DriverStore: their Vulkan never worked.  Report it, but
+            # fail the check only for a package that is meant to have Vulkan.
+            if _icd_resolvable(Session(vm).get("installed")):
+                print("VULKAN FAIL (vkreadback): the Venus ICD did not load or render")
                 ok = False
+            else:
+                print("VULKAN FAIL (vkreadback): expected, this package's virtio_icd.json names the "
+                      "DLL without a path, which the Vulkan loader cannot find in the DriverStore")
     else:
         log("vkreadback.exe not built (scripts/build-probes.sh); Vulkan was not checked")
     print(f"VERIFY {'PASS' if ok else 'FAIL'}")
