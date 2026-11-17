@@ -15,12 +15,11 @@
 # Dev VMs (the build machines and kernel debuggers):
 #   kdnet    -Mac MAC -Address IP: static address on the NIC with that MAC,
 #            the second one, on the kdnet network
-#   tools    7-Zip, Git, CMake, Python, WinFsp and SSHFS-Win
+#   tools    Git, Python, WinFsp and SSHFS-Win (build-viogpu3d keeps Meson
+#            and its Python packages in a venv of its own)
 #   sshfs    RSA key for SSHFS-Win (prints "GUEST_PUBKEY <key>" for the host)
 #            and the persistent Z: mapping of the host's ~/Documents
 #   vs       Visual Studio 2022 Community with the components in vs2022.vsconfig
-#   python   meson, mako, packaging and pyyaml; after vs, because pyyaml has no
-#            wheel for every Python and architecture and is then compiled
 #   wdk      Windows Driver Kit
 #
 # Test VMs (run the driver under test, debugged over kdnet):
@@ -43,7 +42,7 @@
 # provisioning run can be resumed from the failed step.
 
 param(
-    [Parameter(Mandatory)] [ValidateSet('system', 'defender', 'kdnet', 'tools', 'sshfs', 'vs', 'python', 'wdk', 'gpu', 'debug', 'verify', 'content')] [string] $Step,
+    [Parameter(Mandatory)] [ValidateSet('system', 'defender', 'kdnet', 'tools', 'sshfs', 'vs', 'wdk', 'gpu', 'debug', 'verify', 'content')] [string] $Step,
     [string] $Downloads = 'C:\utmapp-bot\downloads',
     [string] $HostUser,
     [string] $Mac,
@@ -355,14 +354,8 @@ switch ($Step) {
 }
 
 'tools' {
-    if (-not (Test-Path "$env:ProgramFiles\7-Zip\7z.exe")) {
-        Install '7z2605-arm64.exe' '/S'
-    }
     if (-not (Test-Path "$env:ProgramFiles\Git\cmd\git.exe")) {
         Install 'Git-2.56.0.4-arm64.exe' '/VERYSILENT', '/NORESTART', '/NOCANCEL', '/SP-', '/SUPPRESSMSGBOXES'
-    }
-    if (-not (Test-Path "$env:ProgramFiles\CMake\bin\cmake.exe")) {
-        Install 'cmake-4.4.5-windows-arm64.msi' 'ADD_CMAKE_TO_PATH=System'
     }
     if (-not (Test-Path $Python)) {
         # Per user, on PATH, as on the golden VM.
@@ -421,15 +414,6 @@ switch ($Step) {
     }
 }
 
-'python' {
-    # pip prints warnings on stderr, which Windows PowerShell would turn into
-    # errors; its exit code decides.
-    $ErrorActionPreference = 'Continue'
-    Write-Host '--- pip install meson mako packaging pyyaml'
-    & $Python -m pip install --disable-pip-version-check --upgrade meson mako packaging pyyaml
-    if ($LASTEXITCODE) { throw "pip install failed with exit code $LASTEXITCODE" }
-}
-
 'wdk' {
     if (-not (Test-Installed 'Windows Driver Kit - Windows 10.0.26100*')) {
         Install 'wdksetup.exe' '/quiet', '/norestart', '/ceip', 'off'
@@ -446,16 +430,14 @@ switch ($Step) {
     function Note([string] $What, [string] $Detail) { Write-Host "  note  $What $Detail" }
 
   if ($Role -eq 'dev') {
-    Write-Host '=== Build tools (as build-mesa and build-drivers.cmd look for them)'
-    foreach ($t in 'git.exe', 'curl.exe', 'tar.exe', 'cmake.exe', 'python.exe', 'pip.exe', 'meson.exe') {
+    Write-Host '=== Build tools (as build-viogpu3d looks for them)'
+    foreach ($t in 'git.exe', 'python.exe') {
         $c = Get-Command $t -ErrorAction SilentlyContinue
         Check $t ([bool]$c) $(if ($c) { $c.Source })
     }
-    foreach ($m in 'packaging', 'mako', 'yaml') {
-        & python.exe -c "import $m" 2>$null
-        Check "python: import $m" ($LASTEXITCODE -eq 0)
-    }
-    Check '7-Zip' (Test-Path "$env:ProgramFiles\7-Zip\7z.exe")
+    # build.ps1 makes a venv and pip-installs Meson, Ninja, Mako, PyYAML into it
+    & python.exe -c "import sys, venv, ensurepip; sys.exit(sys.version_info < (3, 9))" 2>$null
+    Check 'python >= 3.9 with venv and ensurepip' ($LASTEXITCODE -eq 0)
 
     Write-Host '=== Visual Studio and WDK'
     $vs = & $VsWhere -latest -requires Microsoft.VisualStudio.Workload.NativeDesktop -property installationPath

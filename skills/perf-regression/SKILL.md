@@ -74,8 +74,8 @@ names a driver, a discarded warm-up, and a measured run):
 
 ```sh
 $UB ab fs_gt1 --pairs 3 \
-    --a backend=d3dmetal,driver=$HOME/.utmapp-bot/drivers-old/ARM64 \
-    --b backend=d3dmetal,driver=$HOME/.utmapp-bot/drivers/ARM64
+    --a backend=d3dmetal,driver=$HOME/.utmapp-bot/drivers-old/Win10/viogpu3d-arm64x \
+    --b backend=d3dmetal,driver=$HOME/.utmapp-bot/drivers/Win10/viogpu3d-arm64x
 # arms: driver=DIR (required), backend=dxmt|d3dmetal (else UTM's current default),
 #       app=/path/UTM.app, env=K=V;K=V, genv=K=V, debuglog=on
 ```

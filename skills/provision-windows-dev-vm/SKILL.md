@@ -1,6 +1,6 @@
 ---
 name: provision-windows-dev-vm
-description: Create a new UTM Windows 11 ARM64 VM for Windows kernel driver development and debugging — unattended install, guest tools, autologon, OpenSSH both ways, SSHFS-Win Z: share of the host, Visual Studio 2022 + WDK, Python/CMake/Git, a static address on the kdnet network — ready for /utmapp-bot:build-viogpu-driver and to kernel-debug test VMs. Use when asked to provision, create or set up a Windows dev/build VM, or to make an existing dev VM a kdnet debugger.
+description: Create a new UTM Windows 11 ARM64 VM for Windows kernel driver development and debugging — unattended install, guest tools, autologon, OpenSSH both ways, SSHFS-Win Z: share of the host, Visual Studio 2022 + WDK, Python/Git, a static address on the kdnet network — ready for /utmapp-bot:build-viogpu-driver and to kernel-debug test VMs. Use when asked to provision, create or set up a Windows dev/build VM, or to make an existing dev VM a kdnet debugger.
 argument-hint: <path-to-windows-11-arm64.iso>
 ---
 
@@ -72,12 +72,12 @@ uses too; change them with both skills in mind.
 | `install`  | guest | Unattended Windows 11 Pro install; specialize pass turns off UAC, SmartScreen, Smart App Control, automatic device encryption and the firewall and sets the Defender policies; first logon installs guest tools, makes autologon permanent and installs OpenSSH Server with the host key in `administrators_authorized_keys`. Host waits for SSH |
 | `system`   | SSH   | Re-applies the above, long paths, Explorer settings, Copilot/AI/Edge policies off, no sleep, keeps the host-only NIC's default route from competing with the shared NIC; then turns Microsoft Defender off for good through one Safe Mode boot (its WdFilter driver blocks writes to its service keys whenever it runs, even in the specialize pass) |
 | `kdnet`    | SSH   | Renames the second NIC `kdnet` and gives it a static address, the first free one from `192.168.240.200` (kept in `state.env` as `KDNET_IP`), no gateway. An older VM's second NIC is first moved onto the kdnet network (shutdown, AppleScript, boot) |
-| `tools`    | SSH   | 7-Zip, Git, CMake, Python 3.15 (per user, on PATH), WinFsp, SSHFS-Win |
+| `tools`    | SSH   | Git, Python 3.15 (per user, on PATH; build-viogpu3d puts Meson and its packages in a venv of its own), WinFsp, SSHFS-Win |
 | `sshfs`    | both  | Guest RSA key (SSHFS-Win's `\\sshfs.k\` uses `id_rsa`) appended to the host's `~/.ssh/authorized_keys`; persistent `Z:` = `\\sshfs.k\<you>@<host>\Documents` |
-| `vs`       | SSH   | Visual Studio 2022 Community with exactly the components the build needs (`${CLAUDE_PLUGIN_ROOT}/scripts/provision/guest/vs2022.vsconfig`: C++ desktop, ARM64/ARM64EC/x64/x86 tools, Spectre libraries, Windows 11 SDK 26100, WDK extension), then `pip install meson mako packaging pyyaml` (pyyaml has no Python 3.15 win-arm64 wheel and is compiled) |
+| `vs`       | SSH   | Visual Studio 2022 Community with exactly the components the build needs (`${CLAUDE_PLUGIN_ROOT}/scripts/provision/guest/vs2022.vsconfig`: C++ desktop, ARM64/ARM64EC/x64/x86 tools, Spectre libraries, Windows 11 SDK 26100, WDK extension) |
 | `wdk`      | SSH   | WDK 10.0.26100.6584 |
 | `finalize` | host  | Shuts down, replaces the ISO drives with one empty removable drive, boots, adds the VM to `~/.ssh/known_hosts` |
-| `verify`   | SSH   | Checks every tool `build-mesa` and `build-drivers.cmd` look for, the MSVC/Spectre libraries, SDK/WDK, `Z:`, `kd.exe` and the kdnet address, UAC/firewall/Defender/BitLocker/autologon/sshd |
+| `verify`   | SSH   | Checks the tools build-viogpu3d needs (Git, Python with venv), the MSVC/Spectre libraries, SDK/WDK, `Z:`, `kd.exe` and the kdnet address, UAC/firewall/Defender/BitLocker/autologon/sshd |
 
 ### The kdnet network
 
@@ -106,8 +106,8 @@ On success the log ends with `Done: '<name>' is ready at UTM@<address> (kdnet
 debugger address <kdnet-ip>)`. Report the VM name, its SSH destination, its
 kdnet address and the verify summary
 (`~/.utmapp-bot/provision/<vm>/step-verify.log`). Then offer to run
-`/utmapp-bot:build-viogpu-driver '<name>' arm64x 'Z:\<mesa>' 'Z:\<kmd>'` as the
-end-to-end check (a first build compiles LLVM and takes hours).
+`/utmapp-bot:build-viogpu-driver '<name>' -Arch arm64x,x86` as the
+end-to-end check (a first build takes about ten minutes).
 
 ## When it fails
 

@@ -59,7 +59,7 @@ the first four.
 
 ```sh
 $UB vm up [--backend d3dmetal|dxmt|default] [--env NAME=value ...] [--tag what]
-$UB install ~/.utmapp-bot/drivers/ARM64     # a package from /utmapp-bot:build-viogpu-driver
+$UB install ~/.utmapp-bot/drivers/Win10/viogpu3d-arm64x     # a package from /utmapp-bot:build-viogpu-driver
 $UB display-fix                              # after install: restart DWM, reset the mode
 $UB verify                                   # must print VERIFY PASS
 $UB test <exe, probe name or guest path> [args] [--genv NAME=value] [--timeout S]
@@ -68,6 +68,13 @@ $UB shot ; $UB frames 10                     # see it
 $UB hostlog ; $UB crashes                    # anything wrong on the host?
 $UB vm down
 ```
+
+`verify` checks the device, D3D11/D3D12 on the VirtIO adapter
+(`adaptercheck`) and Vulkan through the package's Venus ICD (`vkreadback`,
+ARM64; it prints the ICD's `driverInfo`, which names the Mesa commit). The
+released guest tools of 2026-10-29 and older register an ICD the Vulkan
+loader cannot find, so with `install --released` it reports `VULKAN FAIL`
+without failing the check.
 
 `vm up` prints `UP <vm> ssh=… run_dir=… backend=… net=as-configured|emulated`. `net=emulated` means the app has no vmnet
 entitlement: the VM runs on QEMU's user network for this boot, SSH goes

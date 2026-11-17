@@ -1,4 +1,5 @@
-/* vkreadback: pixel-exact Vulkan checks without a window (Linux guest, Venus).
+/* vkreadback: pixel-exact Vulkan checks without a window (Venus, on a Linux
+ * or a Windows guest).
  *
  * Paths (each into a device-local image, copied to a sentinel-filled
  * HOST_VISIBLE buffer, waited on with a fence, compared):
@@ -10,7 +11,8 @@
  * can fail independently.  Copy this file and replace a path's body to make
  * a repro.  Picks the first non-CPU device; prints which.
  *
- * build in the guest: cc -O2 -o vkreadback vkreadback.c -lvulkan
+ * build in a Linux guest: cc -O2 -o vkreadback vkreadback.c -lvulkan
+ * for Windows: build-probes.sh (ARM64 and x64; x64 uses the ARM64EC ICD)
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -199,6 +201,26 @@ int main(void)
     }
     vkGetPhysicalDeviceProperties(phys, &props);
     printf("using: %s\n", props.deviceName);
+    printf("api %u.%u.%u, driverVersion 0x%x\n", VK_VERSION_MAJOR(props.apiVersion),
+           VK_VERSION_MINOR(props.apiVersion), VK_VERSION_PATCH(props.apiVersion), props.driverVersion);
+    {
+        /* driverInfo names the build: Mesa's ends in "(git-<commit>)".  Core in
+         * 1.2, else VK_KHR_driver_properties (same structure). */
+        VkExtensionProperties ext[512];
+        uint32_t next = 512, has = props.apiVersion >= VK_API_VERSION_1_2;
+        if (vkEnumerateDeviceExtensionProperties(phys, NULL, &next, ext) >= 0)
+            for (uint32_t i = 0; i < next; i++)
+                if (!strcmp(ext[i].extensionName, VK_KHR_DRIVER_PROPERTIES_EXTENSION_NAME))
+                    has = 1;
+        if (has) {
+            VkPhysicalDeviceDriverProperties drv = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES };
+            VkPhysicalDeviceProperties2 p2 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &drv };
+            vkGetPhysicalDeviceProperties2(phys, &p2);
+            printf("driver: %s, %s\n", drv.driverName, drv.driverInfo);
+        } else {
+            printf("driver: no VK_KHR_driver_properties\n");
+        }
+    }
     VkDeviceQueueCreateInfo qi = { VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO, NULL, 0, qf, 1, &prio };
     VkDeviceCreateInfo dci = { VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, NULL, 0, 1, &qi };
     CHECK(vkCreateDevice(phys, &dci, NULL, &dev));

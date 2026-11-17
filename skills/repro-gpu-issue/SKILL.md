@@ -77,7 +77,9 @@ anything from them.
   the layer, and so the release that ships the fix (UTM vs guest tools).
   The driver has no maintained version number, so identify a build by its
   date (`utmbot install --released` prints it), or, for a dev build, by its
-  `build-info.json` commits.
+  commits (the manifest beside the package, `<package>.json`; in the guest,
+  the `(git-…)` in the product version of `viogpu3d.sys` and
+  `neptune_umd.dll`).
 
 ## 3. Not reproduced?
 

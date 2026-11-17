@@ -71,7 +71,7 @@ logs live in `~/.utmapp-bot/` (or `$UTMAPP_BOT_DATA`), outside the plugin.
 | Skill | Does |
 |---|---|
 | `build-utm <checkout> [project]` | Rebuild a UTM dependency (QEMU, virglrenderer, …) or UTM itself into a dev UTM.app, and prove the change is in it |
-| `build-viogpu-driver` | Build and test-sign the VirtIO GPU Windows driver on a dev VM |
+| `build-viogpu-driver` | Build and test-sign the VirtIO GPU Windows driver (utmapp/build-viogpu3d, viogpu-wddm, mesa) on a dev VM from your checkouts |
 
 ### Test and debug
 

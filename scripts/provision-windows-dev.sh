@@ -18,10 +18,9 @@
 #             through one Safe Mode boot
 #   kdnet     static kdnet address on the second NIC (also moves an older VM's
 #             second NIC onto the kdnet network first)
-#   tools     7-Zip, Git, CMake, Python, WinFsp, SSHFS-Win
+#   tools     Git, Python, WinFsp, SSHFS-Win
 #   sshfs     guest key <-> host authorized_keys, Z: = host ~/Documents
-#   vs        Visual Studio 2022 Community (scripts/provision/guest/vs2022.vsconfig),
-#             then meson, mako, packaging, pyyaml (pyyaml may need the compiler)
+#   vs        Visual Studio 2022 Community (scripts/provision/guest/vs2022.vsconfig)
 #   wdk       Windows Driver Kit 10.0.26100 (with the debuggers)
 #   finalize  eject the ISOs, restart, add the VM to ~/.ssh/known_hosts
 #   verify    check every build prerequisite
@@ -86,7 +85,7 @@ stage_kdnet() {
 }
 
 stage_tools() {
-    upload 7z2605-arm64.exe Git-2.56.0.4-arm64.exe cmake-4.4.5-windows-arm64.msi python-3.15.2-arm64.exe \
+    upload Git-2.56.0.4-arm64.exe python-3.15.2-arm64.exe \
         winfsp-2.2.26286.msi sshfs-win-3.7.21011-x64.msi
     guest_step tools
 }
@@ -110,7 +109,6 @@ stage_vs() {
     upload vs_community.exe
     log "Installing Visual Studio 2022 (30-90 minutes)"
     guest_step vs
-    guest_step python
 }
 
 stage_wdk() {

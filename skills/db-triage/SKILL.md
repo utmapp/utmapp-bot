@@ -188,8 +188,8 @@ $UB vm snap restore steam-app-<appid>
   2026-10-29".
 - **Current:** what users get next. A development UTM when this Mac has one
   newer than the release (`/utmapp-bot:build-utm` says how to check),
-  and the newest driver: a dev package (`~/.utmapp-bot/drivers/ARM64`, its
-  `build-info.json`) when it was built after the released date, else the
+  and the newest driver: a dev package (`~/.utmapp-bot/drivers/Win10/viogpu3d-arm64x`, its manifest
+  `viogpu3d-arm64x.json` beside it) when it was built after the released date, else the
   released one. When neither is newer than the release, current *is*
   release and one run covers both. `$UB install` prints which driver it
   installed; quote it.
@@ -228,7 +228,7 @@ place of the GitHub issue. In short:
 $UB app                                        # which UTM, its version
 $UB vm up --backend <dxmt|d3dmetal|default> --tag report-<id>
 $UB install --released                         # release stack first (from the guest tools drive); then current (above)
-$UB display-fix ; $UB verify                   # VERIFY PASS: D3D on the VirtIO adapter
+$UB display-fix ; $UB verify                   # VERIFY PASS: D3D and Vulkan on the VirtIO adapter
 $UB steam start --wait 300                     # "STEAM UP signed in as …"; signed OUT: see below
 $UB steam install <appid>                      # a snapshot from last week needs the game's update first
 $UB steam run <appid>                          # accepts its EULAs (policy, logged), waits for its process
@@ -364,8 +364,8 @@ one. Look for the earliest thing that differs from a working run
 (CrossOver, or real hardware's documented behavior), not only the last
 thing that broke. After each fix, rerun the reporter's path and check the
 symptom list again. The fixes can sit in different repositories: the
-user-mode driver (virtio-win-mesa), the kernel-mode driver
-(kvm-guest-drivers-windows), virglrenderer, the backend shims, QEMU or UTM.
+user-mode driver (utmapp/mesa), the kernel-mode driver
+(utmapp/viogpu-wddm), virglrenderer, the backend shims, QEMU or UTM.
 Each gets its own commits and its own fix branch.
 
 **Make the design decisions yourself.** The person who reviews a fix
@@ -402,8 +402,9 @@ Then work it with the existing skills:
      `.agents/skills/utm-review` (its code review and test requirements;
      in auto mode accept every change it recommends, then validate again),
      then `.agents/skills/utm-submit`. Never by hand (no `gh pr create`).
-   - **Any other repository the org owns** (`utmapp/<name>`:
-     virglrenderer, dxmt, d3dmetal-native, MoltenVK, qemu, …): a pull
+   - **Any other repository the org owns** (`utmapp/<name>`: the
+     guest driver's mesa and viogpu-wddm, virglrenderer, dxmt,
+     d3dmetal-native, MoltenVK, qemu, …): a pull
      request against it, with that repository's attribution rules:
 
      ```sh
@@ -415,8 +416,8 @@ Then work it with the existing skills:
      pull request that moves the pin to the fork commit (section 7 there:
      prove the commit fetches first). It stays a draft until a maintainer
      says on it that the other pull request is merged.
-   - **A repository someone else holds** (osy's guest driver, KMD and
-     Mesa trees; a third-party upstream): a fix branch only, no pull
+   - **A repository someone else holds** (a third-party upstream): a
+     fix branch only, no pull
      request. A person reviews the branches, consolidates them, and
      submits them.
 

@@ -9,9 +9,7 @@
 # downloads them once into ~/.utmapp-bot/cache/downloads/ and checks the hash; to update
 # one, change all three fields (shasum -a 256 <file>).  vs_community.exe is
 # only the Visual Studio 2022 bootstrapper: it installs the current 17.x.
-7z2605-arm64.exe 86d5790d5dd84cab4636c3bb7fab10d3ed7cd3e57e6119401bd2769e28165268 https://github.com/ip7z/7zip/releases/download/26.05/7z2605-arm64.exe
 Git-2.56.0.4-arm64.exe e7dcc4adbb0eb373064598cd18bc75e60128707d816ead51cd9bd98e356f0075 https://github.com/git-for-windows/git/releases/download/v2.56.0.windows.4/Git-2.56.0.4-arm64.exe
-cmake-4.4.5-windows-arm64.msi fcbdbd8327f1416bb34c566f413a9f92f1e35b014909dee89ce42035a131e206 https://github.com/Kitware/CMake/releases/download/v4.4.5/cmake-4.4.5-windows-arm64.msi
 python-3.15.2-arm64.exe a3957667a6305f0fa4c5ce6c73def927ddcad36190b9e27eb4a04e1a9a153c93 https://www.python.org/ftp/python/3.15.2/python-3.15.2-arm64.exe
 winfsp-2.2.26286.msi 293ffb9bcc0b625c85079fe85fa77f8fe98170aba51a02ac9c83d58f6c3b0e2f https://github.com/winfsp/winfsp/releases/download/v2.2B5/winfsp-2.2.26286.msi
 sshfs-win-3.7.21011-x64.msi 76080d7bfb1ba0a807f8874d07388bec4bc30893f2da511d5cb7a16d4490f7d1 https://github.com/winfsp/sshfs-win/releases/download/v3.7.21011/sshfs-win-3.7.21011-x64.msi

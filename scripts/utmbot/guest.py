@@ -263,7 +263,7 @@ def install(vm, pkg_dir=None, released=False):
         src = Path(pkg_dir)
         if not (src / "viogpu3d.inf").exists():
             die(f"{src} has no viogpu3d.inf (expected a package from build-viogpu-driver, "
-                "e.g. ~/.utmapp-bot/drivers/ARM64, or `install --released`)")
+                "e.g. ~/.utmapp-bot/drivers/Win10/viogpu3d-arm64x, or `install --released`)")
         ident = driver_identity(src)
     remote.ssh(vm, f'if exist {GW}\\pkg rmdir /s /q {GW}\\pkg & mkdir {GW}\\pkg', check=True)
     if released:
@@ -303,9 +303,21 @@ def install(vm, pkg_dir=None, released=False):
 
 def driver_identity(pkg_dir):
     """How comments and notes name a dev build: its commits and build time,
-    from the build-info.json build-viogpu-driver writes beside the package."""
+    from the manifest build-viogpu3d writes beside the package
+    (<package>.json), or an older build's build-info.json."""
     import json
+    import datetime
     pkg_dir = Path(pkg_dir)
+    manifest = pkg_dir.parent / f"{pkg_dir.name}.json"
+    try:
+        m = json.loads(manifest.read_text())
+        rev = m.get("revisions") or {}
+        bits = [f"{k} {rev[k]}" for k in ("umd", "kmd") if rev.get(k)]
+        built = datetime.datetime.fromtimestamp(manifest.stat().st_mtime, datetime.timezone.utc)
+        return (f"dev driver {m.get('version', '')} built {built:%Y-%m-%d}"
+                + (f" ({', '.join(bits)})" if bits else ""))
+    except (OSError, ValueError, AttributeError):
+        pass
     for f in (pkg_dir.parent / "build-info.json", pkg_dir / "build-info.json"):
         try:
             m = json.loads(f.read_text())
@@ -319,7 +331,8 @@ def driver_identity(pkg_dir):
 
 
 def verify(vm):
-    """Device started on the 3D driver, and D3D creates on the VirtIO adapter.
+    """Device started on the 3D driver, D3D creates on the VirtIO adapter, and
+    Vulkan (Venus) renders.
 
     D3D11CreateDevice(NULL, HARDWARE) can succeed on the Microsoft Basic Render
     Driver (WARP) — S_OK with no work done on our driver.  The probe picks the
@@ -343,6 +356,23 @@ def verify(vm):
             ok = False
     else:
         log("adaptercheck.exe not built (scripts/build-probes.sh); only the PnP state was checked")
+    # Vulkan: the package's Venus ICD, through the loader, on the same device
+    # (vkreadback prints the driver's driverInfo, which names its commit)
+    vk = probe("vkreadback.exe")
+    if vk:
+        o, rc2, out2 = test(vm, str(vk), [], timeout_s=120)
+        if o != Outcome.DONE or rc2 != 0:
+            # The guest tools released up to 2026-10-29 register an ICD manifest
+            # the loader cannot resolve (a bare DLL name, fixed in viogpu-wddm
+            # 6a8c9d39), so their Vulkan never worked: report it, but only a
+            # dev package (or none installed this boot) fails the check.
+            released = str(Session(vm).get("installed_driver") or "").startswith("released")
+            print("VULKAN FAIL (vkreadback): the Venus ICD did not load or render"
+                  + (" (expected for the released guest tools of 2026-10-29 and older)" if released else ""))
+            if not released:
+                ok = False
+    else:
+        log("vkreadback.exe not built (scripts/build-probes.sh); Vulkan was not checked")
     print(f"VERIFY {'PASS' if ok else 'FAIL'}")
     return ok
 

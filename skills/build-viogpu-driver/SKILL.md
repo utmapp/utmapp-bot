@@ -1,102 +1,136 @@
 ---
 name: build-viogpu-driver
-description: Build the VirtIO GPU Windows driver — the Neptune user-mode driver (Mesa) and the viogpu3d kernel-mode driver — on a Windows build VM over SSH, and pull the verified, test-signed driver package back to this host. Use when asked to build the drivers, the KMD, the UMD, or a driver package.
-argument-hint: <dev VM name | [user@]host[:port]> <arm64x|x64|all> <mesa-path> <kmd-path>
+description: Build the VirtIO GPU Windows driver (viogpu3d) — the Neptune Direct3D and Venus Vulkan user-mode drivers from utmapp/mesa and the kernel driver from utmapp/viogpu-wddm — with utmapp/build-viogpu3d on the Windows dev VM over SSH, from checkouts on this Mac (uncommitted changes included), and pull the test-signed driver packages back. Use when asked to build the drivers, the KMD, the UMD, Neptune, Venus, viogpudo or a driver package.
+argument-hint: "[dev VM | user@host[:port]] [build.ps1 arguments, e.g. -Arch arm64x,x86 -Target kmd]"
 ---
 
 # Build the viogpu3d driver package
 
 Arguments: `$ARGUMENTS`
 
-1. The Windows build VM: the name of a VM made by
-   `/utmapp-bot:provision-windows-dev-vm` (its user, key, and address or
-   forwarded port come from its provisioning state), or an SSH destination
-   `[user@]host[:port]` with key authentication.
-2. `arch` — `arm64x`, `x64` or `all`. There is no 32-bit driver package: the
-   WDK no longer builds x86 kernel-mode drivers. 32-bit applications are
-   covered by the x86 UMD that `all` adds to the 64-bit packages.
-3. `mesa-path` — the Mesa source tree (with the Neptune driver), as a path **on the VM**, e.g. `Z:\virtio-win-mesa`.
-4. `kmd-path` — the `kvm-guest-drivers-windows` tree, as a path **on the VM**, e.g. `Z:\kvm-guest-drivers-windows`.
+The driver is three repositories, all the org's:
 
-If any argument is missing, ask for it. The VM is assumed to have every build
-tool installed and configured; this skill does not set the VM up.
+| Repository | Mac checkout (default) | Provides |
+|---|---|---|
+| [utmapp/build-viogpu3d](https://github.com/utmapp/build-viogpu3d) | `~/Documents/build-viogpu3d` | `build.ps1`: builds, packages, signs; its README is the reference |
+| [utmapp/viogpu-wddm](https://github.com/utmapp/viogpu-wddm) | `~/Documents/viogpu-wddm` | `viogpu3d.sys` (the KMD), `vgpusrv.exe`, `viogpuap.exe`; `viogpudo.sys` |
+| [utmapp/mesa](https://github.com/utmapp/mesa) | `~/Documents/mesa` | `neptune_umd*.dll` (Direct3D), `vulkan_virtio*.dll` (Venus) |
+
+Clone any that is missing next to the others (`git clone
+git@github.com:utmapp/<name>.git ~/Documents/<name>`). A fix goes into a
+branch or worktree of these checkouts; a worktree is passed with `--kmd`,
+`--umd` or `--build`.
 
 ## Run
 
 ```sh
 UB="${CLAUDE_PLUGIN_ROOT}/bin/utmbot"
 $UB dev up                 # the dev VM ($UB machine get dev_vm), under the UTM lease
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/build-drivers.sh" "$($UB machine get dev_vm)" <arch> '<mesa-path>' '<kmd-path>'
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/build-drivers.sh" "$($UB machine get dev_vm)" -Arch arm64x,x86
 $UB dev down
 ```
 
-A worktree for another revision works: create it under `~/Documents` (the
-dev VM's `Z:`) and pass its `Z:\…` path. The script reads the revisions on
-this Mac when the guest cannot (a worktree's `.git` points at a Mac path).
+Everything after the VM is passed to `build.ps1` as it is (lists with
+commas, no spaces). The usual ones:
 
-Quote the Windows paths so the shell keeps the backslashes. Run it in the
-background and wait for it to finish: a first build compiles LLVM and can take
-hours; later builds are incremental and take minutes. Options:
+| To build | Arguments |
+|---|---|
+| the package the test VMs use (ARM64, with x64 apps under emulation and 32-bit apps) | `-Arch arm64x,x86` |
+| the quick native-only ARM64 package | `-Arch arm64` (also the default: the VM is ARM64) |
+| just the KMD, repackaged with the last UMD build | `-Arch arm64x,x86 -Target kmd` |
+| just Neptune, or just Venus, and repackage | `-Arch arm64x,x86 -Target neptune,kmd` |
+| a release's set, plus the display-only driver | `-Target all,viogpudo -Arch all` |
+| the checked KMD | `-Configuration Debug` |
+| from scratch | add `-Clean` |
 
-- `--guest-workdir DIR` — build directory on the VM (default
-  `%USERPROFILE%\utmapp-bot`). It holds `build-mesa\` with its LLVM and Mesa
-  build trees and `kmd\`, a mirror of the KMD source. Reuse the same directory
-  every time; a new one means a full rebuild.
-- `--out DIR` — where packages land on this host (default `~/.utmapp-bot/drivers`).
+Options of the wrapper: `--build DIR`, `--kmd DIR`, `--umd DIR` (the Mac
+checkouts), `--out DIR` (default `~/.utmapp-bot/drivers`),
+`--guest-workdir DIR` (default `%USERPROFILE%\viogpu3d`; keep it, or the
+next build starts over).
+
+Run it in the background and wait for it. A first build takes a few minutes per
+Mesa architecture; later builds are incremental.
 
 ## What it does
 
-`${CLAUDE_PLUGIN_ROOT}/scripts/build-drivers.sh` first clones the latest
-[build-mesa](https://github.com/osy/build-mesa) into `~/.utmapp-bot/build-mesa/`
-(or updates it to the latest commit), then uploads it and
-`${CLAUDE_PLUGIN_ROOT}/scripts/guest/` to the work directory and runs `${CLAUDE_PLUGIN_ROOT}/scripts/guest/build-drivers.cmd` there, which:
+`${CLAUDE_PLUGIN_ROOT}/scripts/build-drivers.sh`:
 
-1. Mirrors the KMD source to `kmd\` (building on an SSHFS-Win share can hang
-   the share, so the KMD is never built in place).
-2. Reads the driver version (`STAMPINF_VERSION`) from the KMD project. The UMD
-   is stamped with it, because Windows only loads a UMD whose file version
-   equals the INF `DriverVer`.
-3. Builds the UMD with `build-mesa` (`build_arm64x.cmd` for `arm64x`,
-   `build.cmd` otherwise).
-4. Builds the Win10 KMD package with `build\build.bat`, pointing it at the UMD
-   through `MESA_PREFIX` / `MESA_ARM64X_PREFIX` / `MESA_X86_PREFIX`.
-   `viogpu.sln` maps viogpu3d's Win11 configuration onto Win10, so the Win10
-   package serves both.
-5. Test-signs with the KMD repo's `build\signAll.bat` (`VirtIOTestCert`).
-6. Verifies each package with `${CLAUDE_PLUGIN_ROOT}/scripts/guest/verify-package.ps1` and fails the
-   build unless the files, versions, INF references, signatures and catalog
-   are all consistent.
-
-| `arch`  | UMD builds          | Packages                                               |
-|---------|---------------------|--------------------------------------------------------|
-| arm64x  | arm64 + arm64ec     | `ARM64` (ARM64X UMD)                                   |
-| x64     | x64                 | `amd64`                                                |
-| all     | x86, x64, arm64x    | `amd64`, `ARM64`; both also carry the x86 UMD for WOW64 |
+1. Reads each Mac checkout: its commit, and when it has uncommitted changes
+   (untracked files that are not ignored included) a work-in-progress commit
+   of its working tree, made without touching the checkout's index or refs.
+   Whatever GitHub's copy of the repository lacks goes into a git bundle.
+2. Uploads the bundles and `${CLAUDE_PLUGIN_ROOT}/scripts/guest/build-viogpu3d.ps1`
+   to `<workdir>\host` and runs that script, which keeps three clones on the
+   VM's own disk (`<workdir>\build-viogpu3d`, `viogpu-wddm`, `mesa`), fetches
+   GitHub and the bundle, and checks out exactly the Mac's state. Uncommitted
+   changes stay uncommitted there too, so the stamp ends in `+` (see below).
+   Nothing builds on the `Z:` share: the KMD builds in place, and builds on
+   SSHFS-Win can hang the share.
+3. Runs `build.ps1` there. It reads the driver version from viogpu-wddm,
+   stamps it into the UMD (Windows only loads a UMD whose file version equals
+   the INF `DriverVer`), builds, assembles each package in an empty directory,
+   checks it against its INF (every file listed, the UMD versions), catalogs
+   it and test-signs it with the KMD repository's `VirtIOTestCert`.
+4. Copies `out\<Os>` back over `<out>/<Os>/`, and the UMD symbols to
+   `<out>/symbols/`.
 
 ## Output
 
-On success:
+```
+~/.utmapp-bot/drivers/
+  Win10/                      (Win11/, Win10-Debug/ for -Os / -Configuration)
+    viogpu3d-arm64x/          a package: .inf .cat .sys, the helpers, the UMDs, PDBs of the KMD
+    viogpu3d-arm64x.json      its manifest: version, revisions {kmd, umd, build}, files, signer
+    viogpu3d-x64/ …  viogpudo-arm64/ …
+  symbols/<arch>/             PDBs of the user-mode drivers
+  build.log                   the whole run
+```
 
-- `~/.utmapp-bot/drivers/<TargetArch>/` — one test-signed package per target
-  (`viogpu3d.inf`/`.sys`/`.cat`, the Neptune UMD DLLs, `vulkan_virtio.dll`,
-  `virtio_icd.json`, plus the repo's other viogpu components). This is the input
-  for installing the driver on a test VM.
-- `~/.utmapp-bot/drivers/build-info.json` — driver version, packages built by this run,
-  and the Mesa/KMD source revisions.
-- `~/.utmapp-bot/drivers/build-<arch>.log` — the full build log.
+The run ends with one `PACKAGE <dir>  version … kmd … umd … build …` line
+per package it built; report those. `out\<Os>` keeps packages from earlier
+runs too, so trust those lines, not the directory listing, for what this run
+made. To try a package: `$UB install ~/.utmapp-bot/drivers/Win10/viogpu3d-arm64x`
+in a fresh disposable boot of a test VM (`/utmapp-bot:run-gpu-test-vm`).
 
-Report the driver version and the package directories to the user. To try
-the package: `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/utmbot install ~/.utmapp-bot/drivers/<TargetArch>`
-on a freshly started test VM (`/utmapp-bot:run-gpu-test-vm`).
+## Which build is installed?
+
+Every build stamps the commits it was made from (ten hex digits, or nine
+and `+` for a tree with uncommitted changes). Verified in a guest:
+
+| Where | Shows the commit? |
+|---|---|
+| Product version of `viogpu3d.sys` and every `neptune_umd*.dll` (Explorer → Properties → Details, or PowerShell) | yes: `100.6.101.58000 (git-68b837cda8)`; the KMD's is the viogpu-wddm commit, the UMD's the Mesa one |
+| The installed INF, `C:\Windows\INF\oem<N>.inf`, header | yes: `; Built from:` with both commits |
+| The package manifest on this Mac (`viogpu3d-<pkg>.json`, `revisions`) | yes, plus the build-viogpu3d commit; `$UB install` prints it |
+| `vulkan_virtio*.dll` | not in Explorer (no version resource); the DLL carries `(git-…)` as the Vulkan driverInfo string that `vulkaninfo` prints (the test VMs have no `vulkaninfo`) |
+| Device Manager, dxdiag, `pnputil /enum-drivers`, WMI | no: only `100.6.101.58000`, which every build shares |
+| `vgpusrv.exe`, `viogpuap.exe`, `viogpudo.sys` | no |
+
+The driver runs from the DriverStore (`viogpu3d.inf_<arch>_<hash>`); there is
+no copy in `System32\drivers`. For a user, this one line in PowerShell
+prints both commits of the driver Windows has loaded:
+
+```powershell
+$d = Split-Path ((Get-CimInstance Win32_VideoController | ? InstalledDisplayDrivers -like '*neptune_umd*').InstalledDisplayDrivers -split ',')[1]; Get-Item "$d\viogpu3d.sys","$d\neptune_umd.dll" | % { '{0}  {1}' -f $_.Name, $_.VersionInfo.ProductVersion }
+```
+
+```
+viogpu3d.sys  100.6.101.58000 (git-d25bb08c4a)
+neptune_umd.dll  100.6.101.58000 (git-68b837cda8)
+```
 
 ## When it fails
 
-Find the first real error in the log, not the last line: search for
-`FAILED:`, `error `, `fatal error` and `ERROR:`.
+Find the first real error in `build.log`, not the last line: `error:`,
+`FAILED:`, `error C`, `fatal error`, `ERROR:`.
 
-- If the cause is something missing on the VM (a compiler component, SDK or
-  WDK piece, a tool), report exactly what is missing and stop. Do not install
+- Something missing on the VM (an MSVC toolset for an architecture, ARM64EC
+  libraries, the WDK, Python): report exactly what and stop. Do not install
   software.
-- If it is an environment problem you can fix on the VM, fix it and rerun.
-- `ERROR: package ... failed verification` lists what is inconsistent in the
-  package; do not hand out a package that failed verification.
+- An environment problem you can fix on the VM: fix it and rerun.
+- A bug in `build.ps1` or its libraries: fix it in the build-viogpu3d
+  checkout and rebuild with it; it is published like any other change to an
+  org repository (`/utmapp-bot:land-stack-change` section 7).
+- `… is neither on GitHub nor in the bundle`: the Mac checkout's remote for
+  `utmapp/<name>` knows a branch GitHub no longer has. `git fetch --prune`
+  that remote and run again.

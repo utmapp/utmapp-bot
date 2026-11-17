@@ -45,7 +45,8 @@ Guest (Windows: console session via schtasks; Linux: detached via setsid):
   install --released      the released driver, from the guest tools `vm up` puts in the
                           VM's removable drive (UTM's own guest tools ISO), named by its
                           INF date
-  verify                  device on the 3D driver + D3D on the 0x1af4 adapter
+  verify                  device on the 3D driver + D3D on the 0x1af4 adapter + Vulkan
+                          (Venus: vkreadback, which prints the ICD's driverInfo)
                           (Linux: Venus device in vulkaninfo)
   display-fix             restart DWM and reset the mode from the console session
   test EXE [ARGS] [--timeout S] [--genv K=V] [--visible]

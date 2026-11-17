@@ -1,6 +1,6 @@
 ---
 name: write-gpu-probe
-description: Write or extend a GPU probe: a small deterministic C test program for the VirtIO GPU stack (D3D11/D3D12 on Windows guests or under Wine, Vulkan/Venus on Linux guests). A probe renders offscreen, reads back into a sentinel-filled buffer, and checks one access path (clear, upload, copy, VB/CB draw, dynamic map, UAV, sampling or present) against exact expected values. It ends with a single PASS/FAIL line. Use this skill to turn a GPU bug into a minimal repro, to get fail-before/pass-after proof for a fix, or to add a new check or access path to an existing probe (readback11.c, readback12.c, vkreadback.c, presentloop.c, adaptercheck.c). Typical requests: "write a test program", "make a repro", "add a check to the probe", "build the probes". Do not use it only to run existing probes or benchmarks, to build drivers, or to write unit tests inside the Mesa tree.
+description: Write or extend a GPU probe: a small deterministic C test program for the VirtIO GPU stack (D3D11/D3D12 on Windows guests or under Wine, Vulkan/Venus on Windows and Linux guests). A probe renders offscreen, reads back into a sentinel-filled buffer, and checks one access path (clear, upload, copy, VB/CB draw, dynamic map, UAV, sampling or present) against exact expected values. It ends with a single PASS/FAIL line. Use this skill to turn a GPU bug into a minimal repro, to get fail-before/pass-after proof for a fix, or to add a new check or access path to an existing probe (readback11.c, readback12.c, vkreadback.c, presentloop.c, adaptercheck.c). Typical requests: "write a test program", "make a repro", "add a check to the probe", "build the probes". Do not use it only to run existing probes or benchmarks, to build drivers, or to write unit tests inside the Mesa tree.
 argument-hint: "<symptom to reproduce>"
 ---
 
@@ -22,7 +22,7 @@ the change and passes after it.
 | `readback11.c` | D3D11, one check per access path: clear, CPU upload, draw (VB + CB + PS), dynamic `Map(WRITE_DISCARD)` renaming, compute UAV write. |
 | `readback12.c` | D3D12: clear, upload-heap copy; with barriers and a fence. |
 | `presentloop.c` | Windowed or fullscreen present loop: fps per 5 s window, worst frame gap, `--rtv-per-frame`; verdict `STEADY` / `DECAY` / `HITCH`. |
-| `vkreadback.c` | Vulkan (Linux, Venus): clear, buffer-to-image copy. |
+| `vkreadback.c` | Vulkan (Venus, Windows or Linux): clear, buffer-to-image copy; prints the driver's name and driverInfo (`(git-<commit>)`). |
 | `fglock.c`, `fgforce.c` | Foreground helpers the harness uses for fullscreen workloads. |
 
 Copy the closest one, keep its skeleton, and replace one path's body with
@@ -69,7 +69,11 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/build-probes.sh '<dev VM name>'   # or [user@
 ```
 
 It builds every `.c` in `probes/`. To add your probe, put it there (or in a
-copy of the directory) and rerun.
+copy of the directory) and rerun. Vulkan probes (`vk*.c`) build against the
+Khronos headers in the Mesa checkout (`~/Documents/mesa/include`, or
+`VULKAN_INCLUDE`) and an import library for `vulkan-1.dll` made from the
+functions they call; no Vulkan SDK is needed. The x64 build runs on the
+ARM64X ICD's ARM64EC view, so run both.
 
 **Without a dev VM**, mingw-w64 builds the x64 versions on the Mac
 (`brew install mingw-w64`):

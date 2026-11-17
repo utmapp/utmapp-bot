@@ -18,7 +18,7 @@ Package: `$ARGUMENTS`
    a string unique to the change (a new message, an error text) in
    `viogpu3d.sys` or the UMD DLLs (`strings -a <pkg>/viogpu3d.sys | grep
    …`), absent from the build before it, and the commits in the package's
-   `build-info.json`.
+   manifest (`<package>.json` beside it: `revisions`).
    Baselines record what produced them (VM, app and version, driver, date,
    under `_provenance` in `~/.utmapp-bot/baselines.json`). A band against
    another VM's or app's numbers says little: save a baseline on the same
@@ -37,7 +37,7 @@ Package: `$ARGUMENTS`
 
 ```sh
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/utmbot matrix \
-    --windows-vm '<test vm>' --driver ~/.utmapp-bot/drivers/ARM64 \
+    --windows-vm '<test vm>' --driver ~/.utmapp-bot/drivers/Win10/viogpu3d-arm64x \
     [--linux-vm '<linux vm>' --linux-cmd '<workload printing FPS n>'] \
     [--band 0.07] [--save-baseline]
 ```

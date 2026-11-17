@@ -29,11 +29,22 @@ mkdir -p "$STAGE/probes"
 cp "$REPO"/probes/*.c "$REPO"/probes/*.h "$STAGE/probes/"
 cp "$REPO/scripts/guest/build-probes.cmd" "$STAGE/probes/"
 crlf "$STAGE/probes/build-probes.cmd"
+# Vulkan probes: the headers from the Mesa checkout (utmapp/mesa carries the
+# Khronos ones), and the loader functions they call for an import library.
+VK_INCLUDE="${VULKAN_INCLUDE:-$HOME/Documents/mesa/include}"
+if [ -f "$VK_INCLUDE/vulkan/vulkan.h" ]; then
+    cp -R "$VK_INCLUDE/vulkan" "$VK_INCLUDE/vk_video" "$STAGE/probes/"
+    { echo "LIBRARY vulkan-1"; echo "EXPORTS"
+      cat "$REPO"/probes/vk*.c | grep -o '\bvk[A-Z][A-Za-z0-9]*(' | tr -d '(' | sort -u | sed 's/^/    /'
+    } > "$STAGE/probes/vulkan-1.def"
+else
+    echo "    no Vulkan headers in $VK_INCLUDE (set VULKAN_INCLUDE): the Vulkan probes are skipped" >&2
+fi
 
 echo "=== Uploading probes to $HOST:$WORK"
 gssh "if exist \"$WORK\" rmdir /s /q \"$WORK\"" || true
 gssh "mkdir \"$WORK\""
-gscp "$STAGE"/probes/* "$HOST:$WORK_SCP/"
+gscp -r "$STAGE"/probes/* "$HOST:$WORK_SCP/"
 
 echo "=== Building"
 mkdir -p "$OUT"
