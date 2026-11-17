@@ -21,7 +21,7 @@
 #   wine      Wine 10.9 staging-tkg (x86_64)
 #   tools     cross compilers and build dependencies
 #   dxvk      DXVK 2.6.1
-#   mesa      Neptune's PE DLLs from osy/virtio-win-mesa (or --mesa-bundle)
+#   mesa      Neptune's PE DLLs from utmapp/mesa (or --mesa-bundle)
 #   nptunix   Neptune's x86_64 Wine unixlib
 #   prefix    the Wine prefix, the 3DMark definitions, Unigine Heaven and
 #             GravityMark (x64, in the prefix), and 3DMark (Fire Strike, Time

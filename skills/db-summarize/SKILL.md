@@ -227,7 +227,7 @@ For log strings from open-source components, search their code first:
 or symbol name in the message (`D3DKMTOpenAdapterFromLuid`). Exact quoted
 phrases often miss lines built from format strings. Repos: `3Shain/dxmt`,
 `utmapp/virglrenderer`, `utmapp/qemu`, `qemu/qemu`, `utmapp/UTM`,
-`utmapp/CocoaSpice`, `osy/virtio-win-mesa`. Drop `--repo` for an interface
+`utmapp/CocoaSpice`, `utmapp/mesa`, `utmapp/viogpu-wddm`. Drop `--repo` for an interface
 id. A hit gives the emitting source line, and that line is the citation.
 Code search allows about 10 requests a minute, so space them and do not
 retry in a loop. GitHub indexes only default branches, so a miss is "not

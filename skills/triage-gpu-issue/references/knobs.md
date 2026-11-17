@@ -60,7 +60,7 @@ The guest driver has trace knobs for:
 
 Their names change. List them with
 `knob-audit.sh <mesa>/src/virtio/neptune` and read the flag tables
-(`npt_env.c`). As of 2026-11, in `osy/virtio-win-mesa` `neptune`:
+(`npt_env.c`). As of 2026-11, in `utmapp/mesa` `neptune`:
 
 | Knob | Effect |
 |---|---|

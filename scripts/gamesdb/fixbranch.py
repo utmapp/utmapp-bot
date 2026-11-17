@@ -5,10 +5,11 @@ Where a fix goes (skills/land-stack-change, "Where it is published"):
 - utmapp/UTM: a pull request, opened only by UTM's own utm-review and
   utm-submit. Never by this command (`--pr` refuses it).
 - any other repository the org owns (utmapp/virglrenderer, utmapp/dxmt,
-  utmapp/d3dmetal-native, utmapp/MoltenVK, utmapp/qemu, ...): `--pr` opens
+  utmapp/d3dmetal-native, utmapp/MoltenVK, utmapp/qemu, the guest driver's
+  utmapp/mesa and utmapp/viogpu-wddm, ...): `--pr` opens
   a pull request against it from the branch on the bot's fork.
-- a repository held by anyone else (osy's guest driver and Mesa trees, a
-  third-party upstream): a branch only. A person reviews it, consolidates
+- a repository held by anyone else (a third-party upstream): a branch
+  only. A person reviews it, consolidates
   it and submits it. `--pr` refuses these.
 
   gamesdb fix-branch REPO_DIR --branch NAME [--ref HEAD] [--upstream OWNER/NAME] [--dry-run]
@@ -19,7 +20,10 @@ Where a fix goes (skills/land-stack-change, "Where it is published"):
 - The bot account is whoever `gh` is logged in as. No login is an error;
   in a dispatched session that is a blocker (`--scope github`).
 - The upstream is REPO_DIR's `origin`, or --upstream when the checkout's
-  origin is something else (a mirror, the bot's fork). The fork is made
+  origin is something else (a mirror, the bot's fork). An old name GitHub
+  redirects (a transferred or renamed repository) resolves to the current
+  one. The fork is the bot's existing fork in the upstream's network, under
+  whatever name it has, or is made
   under the bot account if it does not exist yet (`gh repo fork
   --clone=false`). Nothing is ever pushed to the upstream itself.
 - The push uses HTTPS with gh's token, not SSH: this Mac's SSH key may
@@ -81,6 +85,36 @@ def org():
     return os.environ.get("GHBOT_ORG") or "utmapp"
 
 
+def canonical(owner, name):
+    """The repository's current OWNER/NAME: GitHub redirects a transferred or
+    renamed one (osy/virtio-win-mesa is now utmapp/mesa), and a checkout's
+    origin may still use the old name."""
+    p = gh("api", f"repos/{owner}/{name}", "--jq", ".full_name", check=False)
+    full = p.stdout.strip()
+    if p.returncode == 0 and re.fullmatch(r"[A-Za-z0-9._-]+/[A-Za-z0-9._-]+", full):
+        return tuple(full.split("/"))
+    return owner, name
+
+
+def find_fork(owner, name, login):
+    """The bot's fork of OWNER/NAME, as its repository JSON, or None. GitHub
+    gives an account one fork per network and keeps its name when the parent
+    is renamed or transferred, so it is not always LOGIN/NAME
+    (UTMapp-bot/virtio-win-mesa is the fork of utmapp/mesa)."""
+    want = f"{owner}/{name}".lower()
+    p = gh("api", f"repos/{login}/{name}", check=False)
+    if p.returncode == 0:
+        repo = json.loads(p.stdout)
+        if (repo.get("parent") or {}).get("full_name", "").lower() == want:
+            return repo
+    p = gh("api", "--paginate", f"repos/{owner}/{name}/forks?per_page=100",
+           "--jq", f'.[] | select(.owner.login | ascii_downcase == "{login.lower()}") | .full_name', check=False)
+    found = p.stdout.split()
+    if p.returncode == 0 and found:
+        return json.loads(gh("api", f"repos/{found[0]}").stdout)
+    return None
+
+
 def open_prs(owner, name, login, branch):
     p = gh("api", "--method", "GET", f"repos/{owner}/{name}/pulls", "-f", "state=open", "-f", f"head={login}:{branch}")
     return json.loads(p.stdout or "[]")
@@ -97,6 +131,7 @@ def run(repo, branch, ref="HEAD", dry_run=False, pr=False, title=None, body_file
         owner, name = upstream.split("/")
     else:
         owner, name = upstream_of(repo)
+    owner, name = canonical(owner, name)
     if pr:
         if owner.lower() != org().lower():
             # the checkout may be of an upstream the org has its own repository of
@@ -117,9 +152,8 @@ def run(repo, branch, ref="HEAD", dry_run=False, pr=False, title=None, body_file
     if owner.lower() == login.lower():
         die(f"{owner}/{name} is the bot's own repository; a fix goes to a fork of the upstream")
     # the fork: ours already, or made now
-    p = gh("api", f"repos/{login}/{name}", check=False)
-    fork = json.loads(p.stdout) if p.returncode == 0 else None
-    if fork and (fork.get("parent") or {}).get("full_name", "").lower() != f"{owner}/{name}".lower():
+    fork = find_fork(owner, name, login)
+    if not fork and gh("api", f"repos/{login}/{name}", check=False).returncode == 0:
         die(f"{login}/{name} exists but is not a fork of {owner}/{name}")
     if not fork:
         if dry_run:
@@ -130,13 +164,15 @@ def run(repo, branch, ref="HEAD", dry_run=False, pr=False, title=None, body_file
             # and stdin is not a terminal, so nothing prompts
             gh("repo", "fork", f"{owner}/{name}", "--clone=false")
             for _ in range(60):  # forking is asynchronous
-                if gh("api", f"repos/{login}/{name}", check=False).returncode == 0:
+                fork = find_fork(owner, name, login)
+                if fork:
                     break
                 time.sleep(5)
             else:
                 die(f"GitHub did not finish forking {owner}/{name} to {login}/{name} within 5 minutes")
             note(f"forked {owner}/{name} to {login}/{name}")
-    url = f"https://github.com/{login}/{name}.git"
+    fname = fork["name"] if fork else name
+    url = f"https://github.com/{login}/{fname}.git"
     cred = ["-c", "credential.helper=", "-c", "credential.helper=!gh auth git-credential"]
     there = ""
     if fork:
@@ -154,18 +190,18 @@ def run(repo, branch, ref="HEAD", dry_run=False, pr=False, title=None, body_file
                 "publish a new branch instead (never overwrite)")
         lease = [f"--force-with-lease=refs/heads/{branch}:{there}"]
     elif there:
-        die(f"{login}/{name} already has a branch {branch!r}; publish under a new name (never overwrite), "
+        die(f"{login}/{fname} already has a branch {branch!r}; publish under a new name (never overwrite), "
             "or --update when it is the branch of this account's open pull request")
     if dry_run:
-        print(f"WOULD PUSH {sha[:12]} to {login}/{name}:{branch}")
+        print(f"WOULD PUSH {sha[:12]} to {login}/{fname}:{branch}")
     else:
         p = subprocess.run(["git", *cred, "-C", repo, "push", *lease, url, f"{sha}:refs/heads/{branch}"],
                            capture_output=True, text=True)
         if p.returncode:
-            die(f"push to {login}/{name}:{branch} failed: {(p.stderr or p.stdout).strip()[-400:]}")
+            die(f"push to {login}/{fname}:{branch} failed: {(p.stderr or p.stdout).strip()[-400:]}")
     base = base or json.loads(gh("api", f"repos/{owner}/{name}").stdout).get("default_branch", "main")
-    print(f"FIX-BRANCH https://github.com/{login}/{name}/tree/{branch}")
-    print(f"COMPARE https://github.com/{owner}/{name}/compare/{base}...{login}:{name}:{branch}")
+    print(f"FIX-BRANCH https://github.com/{login}/{fname}/tree/{branch}")
+    print(f"COMPARE https://github.com/{owner}/{name}/compare/{base}...{login}:{fname}:{branch}")
     print(f"HEAD {sha}")
     if update:
         print(f"PR {open_prs(owner, name, login, branch)[0]['html_url']}" if not dry_run else "WOULD UPDATE the PR")

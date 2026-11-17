@@ -12,7 +12,7 @@
 #   dxvk      DXVK 2.6.1 (x86_64 PE); its cross file builds Neptune too
 #   mesa [BUNDLE]
 #             Neptune's Windows DLLs (x86_64 PE) from ~/mesa, a clone of
-#             osy/virtio-win-mesa (branch neptune); with BUNDLE (a git bundle
+#             utmapp/mesa (branch neptune); with BUNDLE (a git bundle
 #             in ~) its neptune branch is checked out instead
 #   nptunix   the x86_64 Wine unixlib that Neptune's PE DLLs call into
 #   prefix    the Wine prefix ~/wine-prefixes/multi-backend/pfx, and the
@@ -33,7 +33,7 @@ MONO=wine-mono-10.1.0-x86.msi   # the wine-mono Wine 10.9 asks for
 MONO_URL=https://dl.winehq.org/wine/wine-mono/10.1.0/$MONO
 MONO_SHA=c88c2431890bc32cacec8d7ea70e53a5ae4b95c8c55ca6e75ef8db0e4ccf1070
 DXVK_TAG=v2.6.1           # 3.0 needs VK_EXT_depth_clip_enable, which Venus on Apple lacks
-MESA_URL=https://github.com/osy/virtio-win-mesa.git
+MESA_URL=https://github.com/utmapp/mesa.git
 # FEX keeps its rootfs in ~/.local/share/fex-emu (~/.fex-emu before)
 rootfs() { ls -d "$HOME"/.local/share/fex-emu/RootFS/Ubuntu_24_04 "$HOME"/.fex-emu/RootFS/Ubuntu_24_04 2>/dev/null | head -1 || true; }
 PFX=$HOME/wine-prefixes/multi-backend/pfx

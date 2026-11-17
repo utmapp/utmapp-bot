@@ -1,6 +1,6 @@
 ---
 name: provision-linux-test-vm
-description: Create a new UTM Ubuntu 26.04 arm64 VM to test the VirtIO GPU stack from Linux — GNOME with autologin, Venus Vulkan, and Windows D3D programs through Wine (10.9 staging-tkg) under FEX-Emu with Neptune's D3D11/12 DLLs built from osy/virtio-win-mesa (or DXVK, or wined3d), hardware TSO, 3DMark in the Wine prefix — from Ubuntu's cloud image, unattended. Use when asked to provision, create or set up a Linux/Ubuntu test VM, a Venus VM, or a VM to run Neptune under Wine/FEX.
+description: Create a new UTM Ubuntu 26.04 arm64 VM to test the VirtIO GPU stack from Linux — GNOME with autologin, Venus Vulkan, and Windows D3D programs through Wine (10.9 staging-tkg) under FEX-Emu with Neptune's D3D11/12 DLLs built from utmapp/mesa (or DXVK, or wined3d), hardware TSO, 3DMark in the Wine prefix — from Ubuntu's cloud image, unattended. Use when asked to provision, create or set up a Linux/Ubuntu test VM, a Venus VM, or a VM to run Neptune under Wine/FEX.
 argument-hint: "[--name NAME] [--mesa-bundle FILE] [--3dmark DIR]"
 ---
 
@@ -63,7 +63,7 @@ redo one step with `--only STAGE` (e.g. `--only mesa` after new commits).
 | `wine` | SSH | Wine 10.9 staging-tkg x86_64 into `~`, hash-checked |
 | `tools` | SSH | mingw-w64, x86_64 Linux cross gcc, meson/ninja, build dependencies |
 | `dxvk` | SSH | DXVK 2.6.1 build; its `build-win64.txt` cross file is also Neptune's |
-| `mesa` | SSH | `osy/virtio-win-mesa` branch `neptune` (or the bundle's) into `~/mesa`, `meson -Dneptune=true` for win64 |
+| `mesa` | SSH | `utmapp/mesa` branch `neptune` (or the bundle's) into `~/mesa`, `meson -Dneptune=true` for win64 |
 | `nptunix` | SSH | `~/bin/build-nptunix-x86`: the unixlib as x86_64 ELF, linked against the rootfs's libraries |
 | `prefix` | SSH | The Wine prefix, the 3DMark definitions in `C:\`, Unigine Heaven and GravityMark, and 3DMark (MSI, Fire Strike and Time Spy, key) when the key and installer are there |
 | `verify` | SSH | Venus device, autologin, FEX, Wine, DXVK, Neptune DLLs, x86_64 unixlib, prefix |

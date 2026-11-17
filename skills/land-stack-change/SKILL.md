@@ -132,8 +132,8 @@ dependency from, and `gh api repos/<owner>/<name>` says whether it exists.
 | The fix is in | Publish it as |
 |---|---|
 | utmapp/UTM | a pull request, only through UTM's own skills: `.agents/skills/utm-review`, then `.agents/skills/utm-submit` (in auto mode, accept every change the review recommends, and validate again). Never by hand |
-| any other repository the org owns (`utmapp/<name>`: virglrenderer, dxmt, d3dmetal-native, MoltenVK, qemu, …) | a pull request against it, from a branch on the bot's own fork of it: `gamesdb fix-branch … --pr` |
-| a repository someone else holds (osy's: the guest driver, the KMD, Mesa, Vulkan-Loader; a third-party upstream) | a fix branch on the bot's fork, no pull request: `gamesdb fix-branch` without `--pr`. A person reviews it, consolidates it and submits it |
+| any other repository the org owns (`utmapp/<name>`: the guest driver's `mesa` (Neptune, Venus) and `viogpu-wddm` (the KMD), `build-viogpu3d`, virglrenderer, dxmt, d3dmetal-native, MoltenVK, qemu, …) | a pull request against it, from a branch on the bot's own fork of it: `gamesdb fix-branch … --pr` |
+| a repository someone else holds (a third-party upstream: Vulkan-Loader, Wine, …) | a fix branch on the bot's fork, no pull request: `gamesdb fix-branch` without `--pr`. A person reviews it, consolidates it and submits it |
 
 A repository the org owns is not "someone else's project": opening the
 pull request there is the expected result, not something to leave for a
