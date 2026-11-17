@@ -137,25 +137,19 @@ def _describe(it, kind="pr"):
     return f"- round `{it['id']}`: {who} {what} at {it['at']} ({it.get('url')}).{flags}"
 
 
+NOT_FOR_YOU = ("this thread has other people in it, and this comment neither mentions nor quotes you, so it "
+               "is not clearly addressed to you: it may answer someone else, or someone else's question")
+
+
 def _render(items, kind="pr"):
-    """Each item with its text; before an author's comment, what other people
-    wrote since this account's last comment (once each), since the author may
-    be answering them rather than you."""
-    lines, shown = [], {i["id"] for i in items if i["kind"] != "triage"}
+    """Each item with its text, and a note on an author's comment that is not
+    clearly addressed to this account (others are in the thread)."""
+    lines = []
     for it in items:
-        between = [b for b in it.get("between") or [] if b["id"] not in shown and not b.get("queued")]
-        if between:
-            lines.append(f"  Context: since your last comment, before @{it['author']}'s comment below, "
-                         "other people commented (not rounds; not addressed to you unless they say so):")
-            for b in between:
-                shown.add(b["id"])
-                lines.append(f"  - @{b['author']}" + (" (org member)" if b.get("member") else "")
-                             + f" commented at {b['at']} ({b.get('url')}).")
-                lines.append(_quote(b["body"]))
         lines.append(_describe(it, kind))
-        if it.get("between"):
-            who = ", ".join(sorted({"@" + b["author"] for b in it["between"]}))
-            lines.append(f"  (Someone else spoke after your last comment: {who}. This may answer them, not you.)")
+        if it.get("others"):
+            who = ", ".join("@" + o for o in it["others"])
+            lines.append(f"  (Not clearly for you: {who} also commented since you joined; {NOT_FOR_YOU}.)")
         if it.get("body"):
             lines.append(_quote(it["body"]))
     return lines
@@ -187,6 +181,13 @@ def own_lines(rec, plugin):
             "Take the UTM lease only if you must build or test."]
 
 
+IGNORE_RULE = ("A comment marked \"Not clearly for you\" belongs to a conversation you are not the target "
+               "of: leave it unanswered, and do not treat it as an answer to you, unless it is actionable for "
+               "your own work (a log or file uploaded, results or details your investigation needs, an "
+               "instruction or clarification about what you are doing); then act on that part and say what "
+               "you are building on. Read the thread when you need to tell which it is.")
+
+
 def reply_prompt(rec, items, plugin):
     """A new session whose first input is the author's reply to a comment this
     account left earlier (that work ran outside the poller, or on another Mac)."""
@@ -204,14 +205,9 @@ def reply_prompt(rec, items, plugin):
               "what is already done and still holds.",
               f"Then continue with what the author gave you, as /utmapp-bot:{skill} {n} --auto describes: "
               "answers to your questions, logs or new details are a reason to reproduce again with them, "
-              "find the cause, and reply with the result. When nobody else spoke after your last comment, "
-              "their comment is addressed to you although it does not mention you. When someone else did "
-              "(shown above as context, e.g. a maintainer asked them something), work out whom they are "
-              "answering: an answer to someone else's question is not an answer to yours, so do not thank "
-              "them for it or treat it as one, and leave it unanswered unless it gives you something that "
-              "bears on your own work (a result, logs, a new detail); then say what you are building on. "
-              "Only a comment that needs no answer from you (a thank-you, an answer to someone else, nothing "
-              "new) gets none. "
+              "find the cause, and reply with the result. A comment not marked \"Not clearly for you\" is "
+              "addressed to you although it does not mention you. " + IGNORE_RULE +
+              " Only a comment that needs no answer from you (a thank-you, nothing new) gets none. "
               f"Reply with `{plugin}/bin/utmbot gh comment {n} --round <round> --body-file FILE`, with the "
               "round of the latest item you answer (one reply may cover several)."]
     if kind == "issue":
@@ -316,10 +312,7 @@ def followup_prompt(rec, items, plugin):
                   "Reply only where someone addresses you: they mention you, ask you something, or reply "
                   "to your comment. The issue's author answering what you asked, or adding logs or details "
                   "after your comment, is addressed to you although it does not mention you: reproduce "
-                  "again with what they gave and reply with the result. But when someone else spoke after "
-                  "your last comment (shown as context, or read the thread), the author may be answering "
-                  "them: an answer to another person's question is theirs, not yours; reply only when it "
-                  "also bears on your own work, and do not present it as an answer to you. "
+                  "again with what they gave and reply with the result. " + IGNORE_RULE + " "
                   "Comments between other people are context; leave them unanswered. A "
                   f"reply: `{plugin}/bin/utmbot gh comment {n} --round <round> --body-file FILE`, with the "
                   "round of the latest item it answers. A request to build the fix and open a PR counts "
@@ -337,7 +330,7 @@ def followup_prompt(rec, items, plugin):
     lines += ["",
               "Reply only where someone addresses you: they mention you, ask you something, reply to "
               "your comment or in a thread you are in, or request your review. Comments between other "
-              "people are context; leave them unanswered. A reply: "
+              "people are context; leave them unanswered. " + IGNORE_RULE + " A reply: "
               f"`{plugin}/bin/utmbot gh comment {n} --round <round> --body-file FILE`, with the round of "
               "the latest item it answers (one reply may cover several); for a review thread add "
               "`--in-reply-to <thread>`. A request to review again or to re-test is a new review: follow "

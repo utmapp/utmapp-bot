@@ -78,11 +78,12 @@ The agent (`app.getutm.utmapp-bot.github`) runs `ghbot run`. How it works:
   started the conversation or the bot has commented there. A small fix whose cause the conversation
   confirms is built, validated and opened as a PR in any of these rounds
   (the same rule as the first round); only an org member's request gets a
-  large fix built. The session replies only where it is addressed. When
-  someone else (a maintainer, say) commented after the bot's last comment,
-  the author's next comments arrive with those comments beside them: the
-  author may be answering that person, and the session leaves such an
-  answer alone unless it bears on the bot's own work. "Review
+  large fix built. The session replies only where it is addressed. Once
+  anyone besides the author and the bot has commented (a maintainer or
+  another user asking or answering something), the author's comments that
+  neither mention nor quote the bot are marked as not clearly for it: the
+  session leaves them alone unless they are actionable for its work (a log,
+  results it needs, a clarifying instruction). "Review
   again" runs the review again on the new head.
 - **Ignored, with no reply:** everyone else, bot accounts, review
   requests on the account's own PRs, and its own comments.

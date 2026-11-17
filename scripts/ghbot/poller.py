@@ -8,10 +8,12 @@ also answered, mention or not, once this account has commented there (a
 "reply": the bot asked something and they answered), whoever started that
 work: a triage run by hand leaves no record here, so GitHub's own thread
 is what counts (spoke_before).  Everyone else, and every bot account, is
-ignored without a reply.  When someone else commented after the bot's last
-comment (a maintainer asked the author something), the author may be
-answering them instead: the session is shown those comments too
-(annotate_between) and decides; it answers only what is for the bot.
+ignored without a reply.  Once other people take part in the thread (a
+maintainer or another user asks the author something, or answers), the
+author's comments that neither mention nor quote the bot are marked as not
+clearly for it (annotate_others): the session acts on such a comment only
+when it is actionable for its own work (a log, a result it asked for, a
+clarifying instruction), and otherwise leaves it alone.
 
 Unasked (GHBOT_AUTO, on by default): every issue and pull request opened
 after this was switched on is taken up as a "triage" round without anyone
@@ -121,37 +123,40 @@ class Poller:
                 rec["spoke_at"] = first
         return bool(first) and first < at
 
-    def annotate_between(self, st, n, author, inputs):
-        """On each of the author's comments the bot is woken for (a reply or a
-        follow-up), the comments other people left since this account's last
-        one before it ("between"): the author may be answering them, not the
-        bot (a maintainer asked something), and a session that saw only the
-        author's half takes it for an answer to itself.  From the whole
-        thread: the other comment is often behind the cursor already."""
-        mine = [i for i in inputs if i["type"] == "issue_comment" and (i.get("author") or "").lower() == author
-                and i["kind"] in ("reply", "followup")]
-        if not mine:
+    def quotes_me(self, body, mine):
+        """Does the comment quote one of this account's comments (GitHub's
+        "Quote reply")?  `mine`: their bodies."""
+        quoted = [l.lstrip()[1:].strip() for l in (body or "").splitlines() if l.lstrip().startswith(">")]
+        return any(len(q) >= 12 and any(q in m for m in mine) for q in quoted)
+
+    def annotate_others(self, n, author, inputs):
+        """Mark each of the author's comments the bot is woken for (a reply or
+        a follow-up) that is not clearly for the bot: other people besides the
+        author have spoken since this account joined the thread, and the
+        comment neither mentions nor quotes it.  The author may be answering
+        them, or someone else's question; the session then acts on it only
+        when it is actionable for its own work.  From the whole thread: the
+        others' comments are often behind the cursor already."""
+        theirs = [i for i in inputs if i["type"] == "issue_comment" and (i.get("author") or "").lower() == author
+                  and i["kind"] in ("reply", "followup")]
+        if not theirs:
             return
         me = self.login().lower()
         cs = self.gh.paged(f"/repos/{self.repo}/issues/{n}/comments")
-        queued = {i["id"] for i in inputs}
-        for it in mine:
-            last = max([c["created_at"] for c in cs if (c.get("user") or {}).get("login", "").lower() == me
-                        and c["created_at"] < it["at"]] or [""])
-            if not last:
+        for it in theirs:
+            mine = [c for c in cs if (c.get("user") or {}).get("login", "").lower() == me and c["created_at"] < it["at"]]
+            if not mine:
                 continue  # the bot never spoke before it: nothing to tell apart
-            between = []
+            joined = min(c["created_at"] for c in mine)
+            others = []
             for c in cs:
                 u = c.get("user") or {}
                 who = u.get("login") or ""
-                if not (last < c["created_at"] < it["at"]) or who.lower() in (me, author) \
-                        or u.get("type") == "Bot" or who.endswith("[bot]"):
-                    continue
-                between.append({"id": f"c{c['id']}", "author": who, "at": c["created_at"], "url": c.get("html_url"),
-                                "member": self.is_member(st, who, c.get("author_association")),
-                                "queued": f"c{c['id']}" in queued, "body": (c.get("body") or "")[:4000]})
-            if between:
-                it["between"] = between
+                if joined < c["created_at"] < it["at"] and who.lower() not in (me, author) \
+                        and u.get("type") != "Bot" and not who.endswith("[bot]") and who not in others:
+                    others.append(who)
+            if others and not (it.get("mentions") or self.quotes_me(it.get("body"), [c.get("body") or "" for c in mine])):
+                it["others"] = others
 
     # ---- the claim ------------------------------------------------------------------
 
@@ -372,11 +377,11 @@ class Poller:
                 # resume the session that wrote the fix: it has the context
                 rec.update(session_id=origin["session_id"], origin=origin["pr"])
                 S.log(f"#{n}: answered in issue #{origin['pr']}'s session {origin['session_id']}")
-        self.annotate_between(st, n, author, inputs)
+        self.annotate_others(n, author, inputs)
         for it in inputs:
             if it["type"] != "description" and (it.get("mentions") or it["kind"] in ("review", "answer", "reply")) \
-                    and not (it["kind"] == "reply" and it.get("between")):
-                self.ack(it)  # (not a reply that may be answering someone else)
+                    and not it.get("others"):
+                self.ack(it)  # (not a comment that may be meant for someone else)
             it.pop("assoc", None)
             it["body"] = it["body"][:20000]
             rec.setdefault("pending", []).append(it)
