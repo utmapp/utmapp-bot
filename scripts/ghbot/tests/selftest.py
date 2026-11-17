@@ -37,6 +37,7 @@ class World:
         self.members = {"osy", "maint"}
         self.prs, self.comments, self.rcomments, self.reviews = {}, [], [], []
         self.timeline, self.reactions = [], []
+        self.comment_eyes = []
         self.force_201 = False  # simulate both Macs winning the race
         self.notified = set()
         self.opened = []  # PRs the bot opened
@@ -174,6 +175,7 @@ class FakeGH:
                 return Response(204, {}, None)
             return Response(200, {}, [r for r in w.reactions if r["pr"] == n])
         if parts[3] in ("issues", "pulls") and parts[4] == "comments" and parts[6] == "reactions":
+            w.comment_eyes.append(int(parts[5]))
             return Response(201, {}, {"id": w.nid()})
         raise GitHubError(404, f"fake: {method} {path}")
 
@@ -612,6 +614,56 @@ def main():
         with contextlib.redirect_stdout(io.StringIO()):
             M.cmd_catchup(SimpleNamespace(apply=True))
         check([i["kind"] for i in S.pr_load(41).get("pending", [])] == ["reply"], "catchup --apply queues it as a reply")
+
+    # a maintainer asks the author something after the bot's comment: the author's answer
+    # reaches the session with the maintainer's question beside it (issue #7788)
+    w.issue(44, "reporter4", "sound cuts off", at=74)
+    w.comment(44, BOT, "I measured the audio path; it plays in full here.", 75)
+    w.comment(44, "reporter4", "I tried CoreAudio, it does not help", 76)
+    a.poll()
+    r44 = a.rec(44)
+    check([(i["kind"], bool(i.get("between"))) for i in r44["pending"]] == [("reply", False)],
+          "an answer right after the bot's comment is a reply with nothing in between")
+    w.comment(44, "maint", "@reporter4 Have you tried UTM 5.0.9?", 77)
+    out = a.poll()
+    check("nothing" in out[44] and len(a.rec(44)["pending"]) == 1,
+          "the maintainer's question to the author does not wake the bot by itself")
+    c78 = w.comment(44, "reporter4", "Not yet but I will!", 78)
+    w.comment(44, "reporter4", "On 5.0.9 the deal sound does not play at all", 79)
+    a.poll()
+    check(c78["id"] not in w.comment_eyes, "no 👀 on a comment that may be answering someone else")
+    p44 = a.rec(44)["pending"]
+    check([i["kind"] for i in p44] == ["reply"] * 3
+          and [[b["author"] for b in i.get("between") or []] for i in p44] == [[], ["maint"], ["maint"]]
+          and p44[1]["between"][0]["member"] and "5.0.9?" in p44[1]["between"][0]["body"],
+          "the author's comments after it carry the maintainer's question, read from the whole thread")
+    check(set(a.rec(44).get("round_members") or {}) <= {i["id"] for i in p44},
+          "the maintainer's question is context, not a round")
+    prompt = jobs.reply_prompt(a.rec(44), p44, "/plug")
+    check(prompt.count("Have you tried UTM 5.0.9?") == 1 and "@maint (org member)" in prompt
+          and prompt.index("Have you tried") < prompt.index("Not yet but I will")
+          and "This may answer them, not you" in prompt and "an answer to someone else's question" in prompt
+          and "Their reply is addressed to you" not in prompt,
+          "the session sees whom the author may be answering, once, before their answer")
+    fprompt = jobs.followup_prompt(dict(a.rec(44), auto=True), p44, "/plug")
+    check("Have you tried UTM 5.0.9?" in fprompt and "may be answering" in fprompt,
+          "a follow-up round shows it too")
+
+    # a thread the bot took up: a stranger's question to the author is context too
+    w.issue(45, "reporter5", "crash on resume", at=80)
+    with a:
+        r = Poller(FakeGH(w), a.cfg).new_record(45, ts(80))
+        r.update(kind="issue", author="reporter5", title="Issue 45", state="open", own=False, auto=True,
+                 auto_seen=True)
+        S.pr_save(r)
+    w.comment(45, BOT, "Which macOS version?", 81)
+    w.comment(45, "randomuser", "@reporter5 are you on an external disk?", 82)
+    w.comment(45, "reporter5", "yes, external disk", 83)
+    a.poll()
+    p45 = a.rec(45)["pending"]
+    check([(i["kind"], [b["author"] for b in i.get("between") or []]) for i in p45] == [("followup", ["randomuser"])]
+          and not p45[0]["between"][0]["member"],
+          "on a thread taken up unasked the author's answer to a stranger carries the stranger's question")
 
     # ---- unasked triage: every new issue, and pull requests by people outside the org ----
     def cli(mac, fn, **kw):

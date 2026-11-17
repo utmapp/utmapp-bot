@@ -8,7 +8,10 @@ also answered, mention or not, once this account has commented there (a
 "reply": the bot asked something and they answered), whoever started that
 work: a triage run by hand leaves no record here, so GitHub's own thread
 is what counts (spoke_before).  Everyone else, and every bot account, is
-ignored without a reply.
+ignored without a reply.  When someone else commented after the bot's last
+comment (a maintainer asked the author something), the author may be
+answering them instead: the session is shown those comments too
+(annotate_between) and decides; it answers only what is for the bot.
 
 Unasked (GHBOT_AUTO, on by default): every issue and pull request opened
 after this was switched on is taken up as a "triage" round without anyone
@@ -117,6 +120,38 @@ class Poller:
             if rec is not None and first:
                 rec["spoke_at"] = first
         return bool(first) and first < at
+
+    def annotate_between(self, st, n, author, inputs):
+        """On each of the author's comments the bot is woken for (a reply or a
+        follow-up), the comments other people left since this account's last
+        one before it ("between"): the author may be answering them, not the
+        bot (a maintainer asked something), and a session that saw only the
+        author's half takes it for an answer to itself.  From the whole
+        thread: the other comment is often behind the cursor already."""
+        mine = [i for i in inputs if i["type"] == "issue_comment" and (i.get("author") or "").lower() == author
+                and i["kind"] in ("reply", "followup")]
+        if not mine:
+            return
+        me = self.login().lower()
+        cs = self.gh.paged(f"/repos/{self.repo}/issues/{n}/comments")
+        queued = {i["id"] for i in inputs}
+        for it in mine:
+            last = max([c["created_at"] for c in cs if (c.get("user") or {}).get("login", "").lower() == me
+                        and c["created_at"] < it["at"]] or [""])
+            if not last:
+                continue  # the bot never spoke before it: nothing to tell apart
+            between = []
+            for c in cs:
+                u = c.get("user") or {}
+                who = u.get("login") or ""
+                if not (last < c["created_at"] < it["at"]) or who.lower() in (me, author) \
+                        or u.get("type") == "Bot" or who.endswith("[bot]"):
+                    continue
+                between.append({"id": f"c{c['id']}", "author": who, "at": c["created_at"], "url": c.get("html_url"),
+                                "member": self.is_member(st, who, c.get("author_association")),
+                                "queued": f"c{c['id']}" in queued, "body": (c.get("body") or "")[:4000]})
+            if between:
+                it["between"] = between
 
     # ---- the claim ------------------------------------------------------------------
 
@@ -337,9 +372,11 @@ class Poller:
                 # resume the session that wrote the fix: it has the context
                 rec.update(session_id=origin["session_id"], origin=origin["pr"])
                 S.log(f"#{n}: answered in issue #{origin['pr']}'s session {origin['session_id']}")
+        self.annotate_between(st, n, author, inputs)
         for it in inputs:
-            if it["type"] != "description" and (it.get("mentions") or it["kind"] in ("review", "answer", "reply")):
-                self.ack(it)
+            if it["type"] != "description" and (it.get("mentions") or it["kind"] in ("review", "answer", "reply")) \
+                    and not (it["kind"] == "reply" and it.get("between")):
+                self.ack(it)  # (not a reply that may be answering someone else)
             it.pop("assoc", None)
             it["body"] = it["body"][:20000]
             rec.setdefault("pending", []).append(it)

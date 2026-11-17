@@ -137,6 +137,30 @@ def _describe(it, kind="pr"):
     return f"- round `{it['id']}`: {who} {what} at {it['at']} ({it.get('url')}).{flags}"
 
 
+def _render(items, kind="pr"):
+    """Each item with its text; before an author's comment, what other people
+    wrote since this account's last comment (once each), since the author may
+    be answering them rather than you."""
+    lines, shown = [], {i["id"] for i in items if i["kind"] != "triage"}
+    for it in items:
+        between = [b for b in it.get("between") or [] if b["id"] not in shown and not b.get("queued")]
+        if between:
+            lines.append(f"  Context: since your last comment, before @{it['author']}'s comment below, "
+                         "other people commented (not rounds; not addressed to you unless they say so):")
+            for b in between:
+                shown.add(b["id"])
+                lines.append(f"  - @{b['author']}" + (" (org member)" if b.get("member") else "")
+                             + f" commented at {b['at']} ({b.get('url')}).")
+                lines.append(_quote(b["body"]))
+        lines.append(_describe(it, kind))
+        if it.get("between"):
+            who = ", ".join(sorted({"@" + b["author"] for b in it["between"]}))
+            lines.append(f"  (Someone else spoke after your last comment: {who}. This may answer them, not you.)")
+        if it.get("body"):
+            lines.append(_quote(it["body"]))
+    return lines
+
+
 def own_lines(rec, plugin):
     """What to do on the account's own pull request (or issue): answer, never review it."""
     n = rec["pr"]
@@ -170,11 +194,8 @@ def reply_prompt(rec, items, plugin):
     kind = rec.get("kind", "pr")
     thing = "pull request" if kind == "pr" else "issue"
     skill = "review-utm-pr" if kind == "pr" else "answer-utm-issue"
-    lines = [f"The author of {thing} #{n} in utmapp/UTM answered after this account commented there. {MARK}", ""]
-    for it in items:
-        lines.append(_describe(it, kind))
-        if it.get("body"):
-            lines.append(_quote(it["body"]))
+    lines = [f"The author of {thing} #{n} in utmapp/UTM commented after this account commented there. {MARK}", ""]
+    lines += _render(items, kind)
     lines += ["",
               f"This continues work this account already did on #{n}, in a session that is not this one. "
               "Read the whole thread first, your own comments included: what you tested, what you found and "
@@ -183,8 +204,14 @@ def reply_prompt(rec, items, plugin):
               "what is already done and still holds.",
               f"Then continue with what the author gave you, as /utmapp-bot:{skill} {n} --auto describes: "
               "answers to your questions, logs or new details are a reason to reproduce again with them, "
-              "find the cause, and reply with the result. Their reply is addressed to you although it does "
-              "not mention you. Only a comment that needs no answer (a thank-you, nothing new) gets none. "
+              "find the cause, and reply with the result. When nobody else spoke after your last comment, "
+              "their comment is addressed to you although it does not mention you. When someone else did "
+              "(shown above as context, e.g. a maintainer asked them something), work out whom they are "
+              "answering: an answer to someone else's question is not an answer to yours, so do not thank "
+              "them for it or treat it as one, and leave it unanswered unless it gives you something that "
+              "bears on your own work (a result, logs, a new detail); then say what you are building on. "
+              "Only a comment that needs no answer from you (a thank-you, an answer to someone else, nothing "
+              "new) gets none. "
               f"Reply with `{plugin}/bin/utmbot gh comment {n} --round <round> --body-file FILE`, with the "
               "round of the latest item you answer (one reply may cover several)."]
     if kind == "issue":
@@ -214,10 +241,7 @@ def triage_prompt(rec, items, plugin):
                  f"Pull request #{n} was just opened on utmapp/UTM by someone who is not an org member. Nobody "
                  f"asked for you: this is unasked triage (the skill's \"A new pull request nobody asked "
                  f"about\"). Its round is `{rnd}`. {MARK}", ""]
-    for it in items:
-        lines.append(_describe(it, kind))
-        if it.get("body"):
-            lines.append(_quote(it["body"]))
+    lines += _render(items, kind)
     lines += ["",
               "Decide first, without the UTM lease, what this is; most outcomes need no VM. When the outcome "
               "is to leave it alone, post nothing at all and end with a one-line summary. Otherwise use only: "
@@ -240,19 +264,13 @@ def first_prompt(rec, items, plugin):
         return reply_prompt(rec, items, plugin)
     if rec.get("own"):
         lines = [f"Org members commented on #{n} in utmapp/UTM. {MARK}", ""]
-        for it in items:
-            lines.append(_describe(it, kind))
-            if it.get("body"):
-                lines.append(_quote(it["body"]))
+        lines += _render(items, kind)
         return "\n".join(lines + own_lines(rec, plugin))
     trig = next((i for i in items if i["kind"] == "review"), items[0])
     skill = "review-utm-pr" if kind == "pr" else "answer-utm-issue"
     lines = [f"/utmapp-bot:{skill} {n} --auto", "",
              f"Requested on GitHub. {MARK}", ""]
-    for it in items:
-        lines.append(_describe(it, kind))
-        if it.get("body"):
-            lines.append(_quote(it["body"]))
+    lines += _render(items, kind)
     if kind == "pr":
         lines += ["", f"Post the review comment with `{plugin}/bin/utmbot gh comment {n} --round {trig['id']} "
                   f"--body-file FILE`, and (step 8) the review with "
@@ -281,10 +299,7 @@ def followup_prompt(rec, items, plugin):
     lines = [f"New activity on {thing} #{n} since you last ran. {MARK}", ""]
     if head and rec.get("reviewed_sha") and head != rec["reviewed_sha"]:
         lines.append(f"The PR's head is now {head[:10]} (you reviewed {rec['reviewed_sha'][:10]}).")
-    for it in items:
-        lines.append(_describe(it, kind))
-        if it.get("body"):
-            lines.append(_quote(it["body"]))
+    lines += _render(items, kind)
     if rec.get("own"):
         return "\n".join(lines + own_lines(rec, plugin))
     if rec.get("auto"):
@@ -301,7 +316,10 @@ def followup_prompt(rec, items, plugin):
                   "Reply only where someone addresses you: they mention you, ask you something, or reply "
                   "to your comment. The issue's author answering what you asked, or adding logs or details "
                   "after your comment, is addressed to you although it does not mention you: reproduce "
-                  "again with what they gave and reply with the result. "
+                  "again with what they gave and reply with the result. But when someone else spoke after "
+                  "your last comment (shown as context, or read the thread), the author may be answering "
+                  "them: an answer to another person's question is theirs, not yours; reply only when it "
+                  "also bears on your own work, and do not present it as an answer to you. "
                   "Comments between other people are context; leave them unanswered. A "
                   f"reply: `{plugin}/bin/utmbot gh comment {n} --round <round> --body-file FILE`, with the "
                   "round of the latest item it answers. A request to build the fix and open a PR counts "
