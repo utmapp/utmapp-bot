@@ -309,7 +309,8 @@ test it.
   publish it as land-stack-change section 7 says, with the same review and
   validation as a UTM change (`/utmapp-bot:validate-stack`,
   `/utmapp-bot:perf-regression`):
-  - a repository the org owns (`utmapp/<name>`): a pull request there,
+  - a repository the org owns (`utmapp/<name>`, the guest driver's
+    `mesa`, `viogpu-wddm` and `build-viogpu3d` included): a pull request there,
     `"${CLAUDE_PLUGIN_ROOT}/bin/gamesdb" fix-branch <checkout> --branch
     fix/issue-<n>-<slug> --pr --title … --body-file …`, with that
     repository's attribution rules. When UTM pins it by commit, the UTM
@@ -317,8 +318,8 @@ test it.
     **draft** (`--draft` on utm-submit's `gh pr create`); a maintainer
     says on it when the other one is merged, and then you re-pin to the
     merged commit and mark it ready.
-  - a repository someone else holds (osy's guest driver, KMD and Mesa
-    trees): a fix branch only (`fix-branch` without `--pr`), linked in the
+  - a repository someone else holds (a third-party upstream): a fix
+    branch only (`fix-branch` without `--pr`), linked in the
     reply. No pull request, and no UTM pull request for it.
   - **Started by the GitHub poller:** bracket the org repository's pull
     request like UTM's: `$UB gh pr <n> --round <round> --repo

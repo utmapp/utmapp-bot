@@ -88,7 +88,7 @@ own pull request). You cannot push to another person's pull request and never tr
 GitHub shows: a change you propose there is a suggestion in your review (`utmbot gh review \
 --comments-file`) when it is small, or a commit on a `review/pr-<n>-...` branch of the bot's fork of UTM \
 (`git push origin`, a new branch) linked from your comment when it is larger, with a review that requests \
-changes; a maintainer decides whether it goes onto the pull request. A repository anyone else holds (osy's included) gets a fix branch only (`fix-branch` \
+changes; a maintainer decides whether it goes onto the pull request. A repository anyone else holds (a third-party upstream) gets a fix branch only (`fix-branch` \
 without `--pr`), never a pull request. Push branches only to the bot's forks (through those commands and \
 utm-submit), never to utmapp's repositories. If one exits with DUPLICATE, another Mac on this account \
 already answered: discard your work (clean up VMs, worktrees and the UTM lease as the skill says) \
