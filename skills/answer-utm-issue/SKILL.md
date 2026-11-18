@@ -329,6 +329,10 @@ test it.
   step 2. A UI change also needs the screenshots `review-utm-pr` step 6
   requires: every configuration in CONTRIBUTING.md, and the unchanged
   layouts.
+- **What the fix could break:** the test plan of `${CLAUDE_PLUGIN_ROOT}/docs/validation.md`,
+  with the lifecycle cycles when the fix touches ordering. Its coverage
+  goes in the PR's Testing section. An untested entry that its section 2
+  calls blocking stops the PR: ask for the setup instead.
 - **Commit** on the branch, following those rules.
 - **Submit only through UTM's own skills,** from the worktree. Never open
   the PR by hand (no `gh pr create`, no API call).

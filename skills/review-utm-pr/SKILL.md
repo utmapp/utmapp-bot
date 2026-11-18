@@ -177,7 +177,11 @@ From the diff:
 - **Animated:** the change is a transition, animation or anything that
   moves. It gets a video (`ui record`) as well as screenshots.
 
-None of these: skip to step 7 with the review alone.
+None of these: no screenshots. A change to runtime behavior (what the
+app does, not only how it looks) still gets the test plan of
+`${CLAUDE_PLUGIN_ROOT}/docs/validation.md` before step 7: what the change could break as well
+as what it improves, and the lifecycle cycles when it touches ordering.
+Anything else goes to step 7 with the review alone.
 
 ## 5. Build head and base
 
@@ -349,13 +353,16 @@ Built <head sha> (and base <sha>) with Xcode <version>.
 
 **Before the fix** (<configuration>): ![](…)  **After:** ![](…)
 **Layout unchanged** (<configurations>): base ![](…) head ![](…)
+**Test plan:** <each entry: result | untested, why, risk>
 
 ## Issues in the screenshots
 <what, where, why> **Proposed fix:** suggested in the review | <commit link> — with it: ![](…)
 ```
 
-Leave out the sections that do not apply (no screenshots taken → no Testing
-section, and say why: not a UI change). Write the table from what you saw,
+Leave out the parts that do not apply (no screenshots taken → no
+screenshot table, and say why: not a UI change). The **Test plan** line
+stays for every change to runtime behavior, so its Testing section has at
+least that line. Write the table from what you saw,
 not from what the PR description says.
 
 - **Interactive:** show the user the draft (and the review verdict) and post
@@ -404,8 +411,9 @@ PR's head (the new side of the diff):
   (and "start_side": "RIGHT" for a range)]}`.
 
 GitHub rejects the whole review when one comment is on a line outside the
-diff: move that change to a commit on the fork instead. Never approve a PR you could not build or test; say so in a plain comment
-instead.
+diff: move that change to a commit on the fork instead. Never approve a PR you could not build or test, or whose test plan has
+an untested entry that `${CLAUDE_PLUGIN_ROOT}/docs/validation.md` section 2 calls blocking; say
+so in a plain comment instead.
 
 ## Follow-ups (GitHub poller)
 

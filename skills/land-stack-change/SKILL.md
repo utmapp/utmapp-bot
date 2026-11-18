@@ -87,7 +87,10 @@ repository (section 7), whichever skill made it.
 4. **Validate again.** The review and the variant fixes changed the code:
    rebuild, rerun the proof (probe fail before, pass after), the reporter's
    path when there is one, and the validation the change already had
-   (`/utmapp-bot:validate-stack`, `/utmapp-bot:perf-regression`).
+   (`/utmapp-bot:validate-stack`, `/utmapp-bot:perf-regression`), and the
+   test plan of `${CLAUDE_PLUGIN_ROOT}/docs/validation.md`: what the change could break beyond
+   its proof, and the lifecycle cycles when it touches ordering. An
+   untested entry that its section 2 calls blocking stops publishing.
 5. **Review again only if it changed a lot.** Significant changes from
    steps 1 to 3 (new logic, other functions, another repository) go
    through steps 3 and 4 once more; small ones (a check, a rename, a
