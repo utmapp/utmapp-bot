@@ -107,7 +107,21 @@ plan cycles, a teardown that leaves state behind. Do not drop one because
 it is "pre-existing" or "out of scope". Do not fold it into the current
 change either: the current task stays as it was planned.
 
-Decide first whether it **reproduces with a test**: a probe, a unit or UI
+First look for earlier work on it: search the repository's issues and pull
+requests, open and closed (`gh search issues`, `gh search prs`, `gh pr list
+--state all --search`, with the function, file or symptom as terms), and
+the upstream's when the code comes from one.
+- **An open issue or pull request** already covers it: do not start a
+  second one. Link it in the current pull request or comment, and add what
+  you found to it (the test, the evidence) when that is new.
+- **A closed pull request** for it that was not merged: the maintainers
+  have waived it as something to be concerned about. Do not reopen or
+  redo it, and do not follow it up; at most mention it with the link where
+  it matters to the current change.
+- **A merged fix** that does not cover what you see: the follow-up below
+  links it and says what it missed.
+
+Then decide whether it **reproduces with a test**: a probe, a unit or UI
 test, or a scripted sequence (with a widened gap or a debugger breakpoint
 where the race needs one, section 3) that fails on this Mac today and that
 a fix would turn into a pass.
