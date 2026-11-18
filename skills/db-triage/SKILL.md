@@ -462,7 +462,19 @@ verifies each item):
    problem to fix or a blocker, not a line in the comment.
 6. `/utmapp-bot:perf-regression`: an interleaved A/B against the current
    stack, with the runs it asks for.
-7. `/utmapp-bot:land-stack-change`, its review step included, and each
+7. The test plan of `${CLAUDE_PLUGIN_ROOT}/docs/validation.md`: what each fix could break beyond the
+   reporter's path (section 6 for the GPU stack: both backends, ARM64 and
+   x64 applications, the driver's own lifecycle when the fix touches start,
+   teardown or ordering), each entry tested or untested with the reason and
+   the risk. An untested entry that its section 2 calls blocking is a
+   blocker (`$GDB session blocked --reason "<the setup needed>"`), not a
+   line in the comment.
+8. Existing issues found during the triage that the fixes did not cause:
+   its section 5. One a test reproduces gets a pull request of its own
+   after this report is finished (or, when the session ends first, the
+   test in the notes for the next session); one that cannot be tested is
+   named in the Auto-Triage comment and the fix's pull request body.
+9. `/utmapp-bot:land-stack-change`, its review step included, and each
    repository's fix published: a pull request where the org owns the
    repository (and the draft UTM pull request for a pinned commit), a fix
    branch otherwise.

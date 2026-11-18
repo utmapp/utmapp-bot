@@ -99,7 +99,9 @@ version, display, a title you do not have. Then ask the reporter for:
 
 Follow `/utmapp-bot:triage-gpu-issue`. Check
 `/utmapp-bot:attribute-to-layer` early: user reports often turn out to be
-app-specific behavior (vendor-ID checks) or a backend defect.
+app-specific behavior (vendor-ID checks) or a backend defect. A fix gets
+the test plan of `${CLAUDE_PLUGIN_ROOT}/docs/validation.md` (section 6), and problems found on the way
+that are not this report's cause are handled as its section 5 says.
 
 ## 5. Reply
 

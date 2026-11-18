@@ -1,10 +1,16 @@
 # Validating a change: what it could break
 
 For every change a skill builds, reviews or recommends that alters runtime
-behavior: its own fixes (`answer-utm-issue`, `land-stack-change`) and the
-pull requests it reviews (`review-utm-pr`). Text-only changes (docs,
-translations, comments) and pure layout changes are covered by the
-screenshot rules instead.
+behavior: its own fixes (`answer-utm-issue`, `land-stack-change`), the
+pull requests it reviews (`review-utm-pr`), the fixes an Auto-Triage
+proposes (`db-triage`, checked by `db-triage-check`), and every change to
+the GPU stack (`triage-gpu-issue`, `repro-gpu-issue`, `attribute-to-layer`:
+the guest driver, virglrenderer, the backend shims, QEMU, UTM's display;
+section 6). Text-only changes (docs, translations, comments) and pure
+layout changes are covered by the screenshot rules instead.
+
+Section 5 applies to all of that work, whatever the change: what to do
+with a problem found on the way that the change did not introduce.
 
 The point is to test what a change could break, not only what it claims to
 improve. A change that is measured only on its benefit can ship a
@@ -48,6 +54,8 @@ setup instead, and say at the top of the comment what is missing.
 - Interactive: tell the user, with a push notification.
 - Started by the GitHub poller: `utmbot gh session blocked --reason "<the
   setup needed>"`.
+- Started by the games-db dispatcher: `gamesdb session blocked --reason
+  "<the setup needed>"`.
 
 Every other untested entry is listed with its risk and does not block.
 
@@ -89,3 +97,66 @@ reporter's, the PR body or the review comment says what happens there:
 
 A test of that path is recommended. When there is none, say so next to
 it.
+
+## 5. Existing issues found along the way
+
+While reviewing a pull request, fixing an issue, triaging a report or
+working on the GPU stack, you will find problems the change at hand did
+not introduce: a bug next to the changed code, a race in a path the test
+plan cycles, a teardown that leaves state behind. Do not drop one because
+it is "pre-existing" or "out of scope". Do not fold it into the current
+change either: the current task stays as it was planned.
+
+Decide first whether it **reproduces with a test**: a probe, a unit or UI
+test, or a scripted sequence (with a widened gap or a debugger breakpoint
+where the race needs one, section 3) that fails on this Mac today and that
+a fix would turn into a pass.
+
+- **Reproducible:** write the test and keep its failing output with the
+  evidence. Finish the current task first: its review, its pull request,
+  its comment. Then fix the existing issue as a **new pull request** of
+  its own, through the same process as any change: this document's test
+  plan, `land-stack-change` (section 7 says where it is published), and
+  for UTM itself `utm-review` and `utm-submit`. Its body links the work
+  where it was found; the original pull request or comment links it back
+  once it exists. When the current session cannot get to it (a poller or
+  dispatcher session at its end), write it down in the handoff or the
+  notes (`$UB notes`) with the test, so the next session starts there.
+- **Not reproducible with a test:** surface it, with no follow-up now. Say
+  in the original pull request body, review comment or Auto-Triage comment
+  what it is, where (`file:line` or the component), what was seen, and why
+  it could not be turned into a test.
+
+Either way it is not a blocker for the current change unless the change
+makes it worse, which makes it part of the change (a regression, section
+1). A follow-up pull request for an existing issue in a repository the
+org does not own is a fix branch, as `land-stack-change` section 7 says.
+
+## 6. The GPU stack
+
+For a change to the guest driver (KMD, UMD), virglrenderer, the backend
+shims, QEMU or UTM's display path, the test plan of section 1 means:
+
+- **Where it runs:** both backends (D3DMetal, DXMT), Windows and, when the
+  path is shared, Linux guests; ARM64 and x64 (ARM64EC) applications, and
+  x86 (WOW64) for the D3D driver; Vulkan (Venus) as well as D3D when the
+  KMD or a shared path changes. `/utmapp-bot:validate-stack` is the matrix;
+  `/utmapp-bot:perf-regression` the performance side.
+- **What it produces:** pixel-exact probes (`/utmapp-bot:write-gpu-probe`)
+  as well as benchmark scores; a score says nothing about wrong pixels.
+- **Lifecycle (section 3):** for the KMD, the cycles are the device's own:
+  `pnputil /disable-device` and `/enable-device`, a live upgrade from the
+  released driver (and from the previous release) to the change, and back;
+  for the host side, VM start and stop, and a guest reboot. A change in
+  teardown or start is not tested until it has gone through these.
+- **Widen the gaps with the debugger:** a kernel-debugger breakpoint at the
+  ordering point (`/utmapp-bot:kernel-debug`, e.g. on the dxgkrnl DDI that
+  starts or stops the adapter) holds the race open for as long as needed
+  and lets the state be read there (registers, PCI config space). A guest
+  with one vCPU removes scheduling luck from races that need a thread and
+  an interrupt on the same CPU. Restore the VM's configuration afterwards.
+- **Released drivers:** a live upgrade involves the driver being replaced,
+  which this change cannot fix. Test from the drivers users actually run
+  (`utmbot install --released`, the previous release), not only from a
+  development build.
+

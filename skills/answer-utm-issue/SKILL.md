@@ -333,6 +333,10 @@ test it.
   with the lifecycle cycles when the fix touches ordering. Its coverage
   goes in the PR's Testing section. An untested entry that its section 2
   calls blocking stops the PR: ask for the setup instead.
+- **Existing issues found on the way** (not caused by this issue's bug,
+  not fixed by this PR): its section 5. Reproducible with a test: a pull
+  request of its own after this one is submitted. Otherwise named in this
+  PR's body.
 - **Commit** on the branch, following those rules.
 - **Submit only through UTM's own skills,** from the worktree. Never open
   the PR by hand (no `gh pr create`, no API call).

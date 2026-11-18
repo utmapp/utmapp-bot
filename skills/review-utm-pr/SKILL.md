@@ -160,8 +160,15 @@ or a CONTRIBUTING.md/AGENTS.md rule a maintainer would not merge past
 PR, a hand-edited generated file, logging outside UTMLogging). Each with
 `file:line`, why it blocks, and the **recommended fix**, in the form step
 7 gives ("Proposing changes": a suggestion when it is small, a commit on
-the bot's fork when it is larger). Drop style nits, pre-existing issues and anything a compiler
+the bot's fork when it is larger). Drop style nits and anything a compiler
 catches.
+
+A pre-existing issue (a problem the PR did not introduce) is not a
+blocker, but it is not dropped either: `${CLAUDE_PLUGIN_ROOT}/docs/validation.md` section 5. When a test
+reproduces it, finish this review first, then fix it in a pull request of
+its own and link it from the review comment. When none can, name it in
+the review comment ("Existing issue, not from this PR: …") with what was
+seen and why it could not be tested.
 
 ## 4. Does it need screenshots?
 

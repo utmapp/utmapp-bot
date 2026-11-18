@@ -89,8 +89,12 @@ repository (section 7), whichever skill made it.
    path when there is one, and the validation the change already had
    (`/utmapp-bot:validate-stack`, `/utmapp-bot:perf-regression`), and the
    test plan of `${CLAUDE_PLUGIN_ROOT}/docs/validation.md`: what the change could break beyond
-   its proof, and the lifecycle cycles when it touches ordering. An
-   untested entry that its section 2 calls blocking stops publishing.
+   its proof, and the lifecycle cycles when it touches ordering (for the
+   GPU stack, its section 6). An untested entry that its section 2 calls
+   blocking stops publishing. Problems found on the way that this change
+   did not introduce are not folded into it: its section 5 (a later pull
+   request of their own when a test reproduces them, otherwise named in
+   this one's body).
 5. **Review again only if it changed a lot.** Significant changes from
    steps 1 to 3 (new logic, other functions, another repository) go
    through steps 3 and 4 once more; small ones (a check, a rename, a
@@ -222,3 +226,7 @@ not, and why), what `/code-review` found and what was applied, the
 validation after it, patches saved for diagnostics, and anything left
 uncommitted on purpose, and each pull request or fix branch published
 (section 7), with the reason for any repository that got only a branch.
+Then the test plan's coverage (each entry tested, or untested with the
+reason and the risk) and the existing issues found on the way: the test
+that reproduces each and its follow-up pull request (or that it is next),
+or why it could not be tested.

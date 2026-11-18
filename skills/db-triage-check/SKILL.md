@@ -91,6 +91,13 @@ what would close it.
   counts as missing);
 - the land-stack-change review (MSDN or spec check, `/code-review high`,
   validation again after its fixes);
+- the test plan of `${CLAUDE_PLUGIN_ROOT}/docs/validation.md` for each fix, its coverage listed in the
+  pull request body and the comment: an entry left untested that its
+  section 2 calls blocking fails the check;
+- existing issues found on the way handled as its section 5 says: a test
+  and a follow-up pull request (or the test recorded for the next session)
+  when one reproduces them, otherwise named in the comment. One the
+  transcript shows and the comment leaves out fails the check;
 - every fix published and linked where land-stack-change section 7 says:
   a pull request for UTM and for any other repository the org owns
   (`utmapp/<name>`), a fix branch with its COMPARE view for a repository

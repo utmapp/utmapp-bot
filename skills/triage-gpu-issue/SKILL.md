@@ -96,3 +96,12 @@ Debug knobs and how to check that they still exist: `references/knobs.md`.
   (MSDN or Vulkan spec, related paths, `/code-review high`, validate again)
   comes before anything is pushed: each commit carries the
   probe or measurement that shows its effect.
+- Test what the fix could break, not only the symptom:
+  `${CLAUDE_PLUGIN_ROOT}/docs/validation.md` (section 6 for this stack: both backends, ARM64/x64/x86
+  applications, D3D and Vulkan, and the driver's lifecycle: disable and
+  enable, live upgrade from the released driver, VM start and stop; widen
+  ordering gaps with a kernel-debugger breakpoint).
+- Problems found during the triage that are not this symptom's cause:
+  its section 5. Reproducible with a test: a pull request of its own once
+  this work is done. Otherwise named in the finding and the fix's pull
+  request.
